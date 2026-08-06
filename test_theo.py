@@ -101,6 +101,26 @@ def test_neutral_z0():
     assert approx(peaks[0].mass, 194.0804, 1e-3)
     print(f"[OK] z=0 中性分子 m/z = M = {peaks[0].mz:.6f}")
 
+def test_min_abundance_filter():
+    """丰度阈值过滤：低于 min_ab% 的峰不显示；
+    默认 0.05% 时大分子尾部小峰被滤掉；min_ab=0 时全部显示"""
+    cols = [
+        theo.ElementColumn('C', 'natural', 134),
+        theo.ElementColumn('H', 'natural', 198),
+        theo.ElementColumn('N', 'natural', 28),
+        theo.ElementColumn('O', 'natural', 35),
+        theo.ElementColumn('S', 'natural', 1),
+    ]
+    all_peaks = theo.compute_theoretical_spectrum(cols, z=1, tol=0.001, min_ab=0.0, top_n=1000)
+    filtered = theo.compute_theoretical_spectrum(cols, z=1, tol=0.001, min_ab=0.05, top_n=1000)
+    assert len(filtered) <= len(all_peaks), "过滤后峰数应不超过过滤前"
+    assert len(filtered) > 0, "过滤后不应为空"
+    assert all(p.rel_abundance >= 0.05 for p in filtered), \
+        f"存在低于阈值的峰: {[p.rel_abundance for p in filtered]}"
+    # 大分子尾部峰丰度应确实低于 0.05%（验证过滤真的发生）
+    assert len(filtered) < len(all_peaks), "多肽大分子应有丰度<0.05%的尾部峰被滤除"
+    print(f"[OK] 丰度过滤: 全部 {len(all_peaks)} 峰 → 阈值0.05%后 {len(filtered)} 峰 (min={min(p.rel_abundance for p in filtered):.4f}%)")
+
 if __name__ == '__main__':
     test_caffeine_monoisotopic()
     test_peptide_monoisotopic()
@@ -110,4 +130,5 @@ if __name__ == '__main__':
     test_less_than_20_peaks()
     test_negative_charge()
     test_neutral_z0()
+    test_min_abundance_filter()
     print("\n全部测试通过 ✔")

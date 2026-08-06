@@ -27,7 +27,7 @@ Sub RunTheo()
     Dim jsonPath As String, errPath As String
     Dim cmd As String
     Dim i As Long
-    Dim z As Long, tol As Double
+    Dim z As Long, tol As Double, minAb As Double
     Dim fso As Object, file As Object
     Dim json As String, errText As String
     Dim m As Double, mz As Double, ab As Double
@@ -70,6 +70,12 @@ Sub RunTheo()
 
     z = CLng(ws.Cells(9, 2).Value)
     tol = CDbl(ws.Cells(10, 2).Value)
+    If IsNumeric(ws.Cells(11, 2).Value) Then
+        minAb = CDbl(ws.Cells(11, 2).Value)
+    Else
+        minAb = 0.05
+    End If
+    If minAb < 0 Then minAb = 0
 
     pyExe = GetPythonExe()
     If pyExe = "" Then
@@ -85,6 +91,7 @@ Sub RunTheo()
     ' 直接调用 theo.py --out 模式（无重定向，theo.py 自行写文件）
     cmd = """" & pyExe & """ """ & theoPath & """ --elements " & Trim(args) & _
           " --z " & CStr(z) & " --tol " & Replace(CStr(tol), ",", ".") & _
+          " --min-ab " & Replace(CStr(minAb), ",", ".") & _
           " --json --out """ & jsonPath & """"
 
     ' --- 用 Shell 启动（隐藏窗口），随后轮询输出文件 ---

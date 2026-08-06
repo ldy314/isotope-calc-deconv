@@ -159,10 +159,12 @@ def compute_theoretical_spectrum(
     z: int = 1,
     tol: float = 0.001,
     top_n: int = 20,
+    min_ab: float = 0.05,
 ) -> List[IsotopePeak]:
     """计算前 top_n 个同位素峰，按质量升序返回。
 
     z=0 表示中性分子：m/z 列输出中性质量 M（不除电荷、不加电子质量修正）。
+    min_ab: 相对丰度阈值（%，最强峰=100）。相对丰度低于该值的峰不显示（默认 0.05%）。
     """
     if not columns:
         raise ValueError("元素表为空")
@@ -187,6 +189,8 @@ def compute_theoretical_spectrum(
     max_ab = max(p.abundance for p in peaks)
     for p in peaks:
         p.rel_abundance = p.abundance / max_ab * 100.0
+    # 过滤相对丰度低于阈值 min_ab% 的峰
+    peaks = [p for p in peaks if p.rel_abundance >= min_ab]
     # 取丰度最高的前 top_n
     peaks.sort(key=lambda p: p.abundance, reverse=True)
     peaks = peaks[:top_n]
@@ -211,6 +215,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--z", type=int, default=1, help="电荷数（默认 1）")
     parser.add_argument("--tol", type=float, default=0.001, help="质量精度（峰合并容差 Da，默认 0.001）")
+    parser.add_argument("--min-ab", type=float, default=0.05, help="相对丰度阈值（%%，最强峰=100，低于此值不显示，默认 0.05）")
     parser.add_argument("--top", type=int, default=20, help="输出峰数（默认 20）")
     parser.add_argument("--json", action="store_true", help="JSON 输出（供 Excel 回填）")
     parser.add_argument("--out", metavar="FILE", default=None,
@@ -239,7 +244,7 @@ def main(argv=None):
             _emit_error(args, f"错误：{e}")
             return 1
     try:
-        peaks = compute_theoretical_spectrum(columns, z=args.z, tol=args.tol, top_n=args.top)
+        peaks = compute_theoretical_spectrum(columns, z=args.z, tol=args.tol, top_n=args.top, min_ab=args.min_ab)
     except ValueError as e:
         _emit_error(args, f"错误：{e}")
         return 1
@@ -261,7 +266,7 @@ def main(argv=None):
 
 def _json_text(args, peaks) -> str:
     """生成每峰一行的 JSON 文本（VBA 逐行解析：每行含 rank/mass/mz/abundance）"""
-    lines = ['{"z": %d, "tol": %s, "peaks": [' % (args.z, repr(args.tol))]
+    lines = ['{"z": %d, "tol": %s, "min_ab": %s, "peaks": [' % (args.z, repr(args.tol), repr(args.min_ab))]
     for i, p in enumerate(peaks):
         comma = ',' if i < len(peaks) - 1 else ''
         lines.append(

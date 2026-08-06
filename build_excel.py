@@ -225,12 +225,30 @@ for i in range(N_COLS):
     )
     cell6.font = Font(name='微软雅黑', size=8, color='999999')
 
-# B7 = CONCATENATE(B6:AA6)（忽略空）
+# B7 = CONCATENATE(B6:AA6)（忽略空）+ 电荷上标（z≠0 时）
 ws['A7'] = '分子式（自动）'
 ws['A7'].font = FONT_LABEL
 ws.merge_cells('B7:J7')
 ws['B7'].font = FONT_BODY
-ws['B7'].value = '=CONCATENATE(B6, C6, D6, E6, F6, G6, H6, I6, J6, K6, L6, M6, N6, O6, P6, Q6, R6, S6, T6, U6, V6, W6, X6, Y6, Z6, AA6)'
+
+# 电荷上标：把 B9 的数值转成上标字符（²⁺/³⁻/⁺/⁻），z=0 或空时不显示
+# 例：z=2 → "²⁺"，z=-1 → "⁻"（化学惯例单电荷省略数字 1）
+CHARGE_SUP = {
+    '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+    '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+}
+abs_z = _sub_formula('TEXT(ABS(B9),"0")', CHARGE_SUP)
+# 单电荷（|z|=1）省略数字：⁺ / ⁻；多电荷显示 ²⁺ / ³⁻ 等
+charge_abs = (
+    f'IF(ABS(B9)=1,'
+    f'IF(B9>0,"⁺","⁻"),'
+    f'{abs_z}&IF(B9>0,"⁺","⁻"))'
+)
+charge_suffix = f'IF(OR(B9="",B9=0),"",{charge_abs})'
+ws['B7'].value = (
+    '=CONCATENATE(B6, C6, D6, E6, F6, G6, H6, I6, J6, K6, L6, M6, N6, O6, P6, Q6, R6, S6, T6, U6, V6, W6, X6, Y6, Z6, AA6)'
+    ' & ' + charge_suffix
+)
 
 # --- 参数区 ---
 ws['A9'] = '电荷数 z'
@@ -249,6 +267,15 @@ ws['B10'].alignment = CENTER
 ws['B10'].border = BORDER
 ws['B10'].fill = FILL_INPUT
 ws['B10'].number_format = '0.000'
+
+ws['A11'] = '丰度阈值 (%)'
+ws['A11'].font = FONT_LABEL
+ws['B11'] = 0.05
+ws['B11'].font = FONT_BODY
+ws['B11'].alignment = CENTER
+ws['B11'].border = BORDER
+ws['B11'].fill = FILL_INPUT
+ws['B11'].number_format = '0.00'
 
 # --- 输出表 ---
 ws['A12'] = '输出：丰度前20同位素峰（按质量升序）'
@@ -285,9 +312,10 @@ notes = [
     '1. 第3行选元素，第4行选同位素种类（natural=自然分布，或输入质量数如 13），第5行输入原子个数',
     '2. 选 natural 时原子个数=该元素总原子数（按天然丰度算分布包络）；选纯同位素（如 13）时=该同位素原子数（固定质量）',
     '3. 同元素可占多列（如 natural C×128 + ¹³C×6）表示部分标记多肽',
-    '4. 第9行电荷数 z（可正可负），第10行质量精度=峰合并容差（默认0.001 Da）',
-    '5. 点击"计算前20峰"按钮，调用 Python (theo.py) 计算并回填输出表',
-    '6. 需要本机安装 Python 3.11+ 与 molmass 库：pip install molmass',
+    '4. 第9行电荷数 z（可正可负，0=中性分子不显示电荷），第10行质量精度=峰合并容差（默认0.001 Da）',
+    '5. 第11行丰度阈值=相对丰度低于此值的峰不显示（默认0.05%，最强峰=100%）',
+    '6. 点击"计算前20峰"按钮，调用 Python (theo.py) 计算并回填输出表',
+    '7. 需要本机安装 Python 3.11+ 与 molmass 库：pip install molmass',
 ]
 for i, note in enumerate(notes):
     cell = ws[f'A{37 + i}']
@@ -295,8 +323,8 @@ for i, note in enumerate(notes):
     cell.font = Font(name='微软雅黑', size=10, color='595959')
 
 # 按钮说明（实际按钮由 inject_vba.ps1 通过 COM 创建，位置在 E40 附近）
-ws['A43'] = '▶ 按钮"计算前20峰"由构建脚本自动放置（E40 区域）'
-ws['A43'].font = Font(name='微软雅黑', size=10, bold=True, color='C00000')
+ws['A44'] = '▶ 按钮"计算前20峰"由构建脚本自动放置（E40 区域）'
+ws['A44'].font = Font(name='微软雅黑', size=10, bold=True, color='C00000')
 
 wb.save(OUT)
 print(f'已保存: {OUT}（此为 .xlsx 中间格式，随后由 inject_vba.ps1 注入宏并另存为 .xlsm）')
