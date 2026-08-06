@@ -92,6 +92,15 @@ def test_negative_charge():
     assert approx(peaks[0].mz, expected, 1e-4), f"m/z={peaks[0].mz} 期望 {expected}"
     print(f"[OK] z=-1 m/z = {peaks[0].mz:.6f} (期望 ~{expected:.6f})")
 
+def test_neutral_z0():
+    """z=0 中性分子：m/z = M（不除电荷、不加电子质量修正）"""
+    cols = [theo.ElementColumn('C', 'natural', 8), theo.ElementColumn('H', 'natural', 10),
+            theo.ElementColumn('N', 'natural', 4), theo.ElementColumn('O', 'natural', 2)]
+    peaks = theo.compute_theoretical_spectrum(cols, z=0, tol=0.001)
+    assert approx(peaks[0].mz, peaks[0].mass, 1e-9), f"z=0 时 m/z 应等于 M: {peaks[0].mz} vs {peaks[0].mass}"
+    assert approx(peaks[0].mass, 194.0804, 1e-3)
+    print(f"[OK] z=0 中性分子 m/z = M = {peaks[0].mz:.6f}")
+
 if __name__ == '__main__':
     test_caffeine_monoisotopic()
     test_peptide_monoisotopic()
@@ -100,4 +109,5 @@ if __name__ == '__main__':
     test_merge_tolerance()
     test_less_than_20_peaks()
     test_negative_charge()
+    test_neutral_z0()
     print("\n全部测试通过 ✔")

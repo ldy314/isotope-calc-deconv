@@ -193,11 +193,44 @@ for i in range(N_COLS):
 for col in range(2, 2 + N_COLS):
     ws.column_dimensions[get_column_letter(col)].width = 9
 
-# --- 分子式显示（辅助行，隐藏） ---
+# --- 分子式显示（B7 自动生成，含下标/上标） ---
+# 方案：第 6 行为辅助行（每列一个短公式生成分子式片段），B7 用 CONCATENATE 拼接。
+# 避免单个 B7 公式超 Excel 8192 字符限制。
+SUB_MAP_D = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+             '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉'}
+SUB_MAP_U = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+             '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹'}
+
+
+def _sub_formula(ref: str, mapping: dict) -> str:
+    """生成把 ref 中 0-9 替换为下标/上标的公式"""
+    f = ref
+    for d, rep in mapping.items():
+        f = f'SUBSTITUTE({f},"{d}","{rep}")'
+    return f
+
+
+# 第 6 行：每列生成分子式片段（纯同位素 → 上标质量数&元素&下标个数）
+for i in range(N_COLS):
+    col = i + 2
+    L = get_column_letter(col)
+    cnt_fmt = _sub_formula(f'TEXT({L}5,"0")', SUB_MAP_D)
+    iso_fmt = _sub_formula(f'TEXT({L}4,"0")', SUB_MAP_U)
+    cell6 = ws[f'{L}6']
+    cell6.value = (
+        f'=IF({L}5="","",'
+        f'IF(OR({L}4="",{L}4="natural"),'
+        f'{L}3&{cnt_fmt},'
+        f'{iso_fmt}&{L}3&{cnt_fmt}))'
+    )
+    cell6.font = Font(name='微软雅黑', size=8, color='999999')
+
+# B7 = CONCATENATE(B6:AA6)（忽略空）
 ws['A7'] = '分子式（自动）'
 ws['A7'].font = FONT_LABEL
 ws.merge_cells('B7:J7')
 ws['B7'].font = FONT_BODY
+ws['B7'].value = '=CONCATENATE(B6, C6, D6, E6, F6, G6, H6, I6, J6, K6, L6, M6, N6, O6, P6, Q6, R6, S6, T6, U6, V6, W6, X6, Y6, Z6, AA6)'
 
 # --- 参数区 ---
 ws['A9'] = '电荷数 z'

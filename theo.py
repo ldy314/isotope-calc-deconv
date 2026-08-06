@@ -160,18 +160,22 @@ def compute_theoretical_spectrum(
     tol: float = 0.001,
     top_n: int = 20,
 ) -> List[IsotopePeak]:
-    """计算前 top_n 个同位素峰，按质量升序返回。"""
+    """计算前 top_n 个同位素峰，按质量升序返回。
+
+    z=0 表示中性分子：m/z 列输出中性质量 M（不除电荷、不加电子质量修正）。
+    """
     if not columns:
         raise ValueError("元素表为空")
-    if z == 0:
-        raise ValueError("电荷数 z 不能为 0")
     if tol <= 0:
         raise ValueError("质量精度必须 > 0")
 
     dist = _convolve_columns(columns, tol=tol)
     peaks = []
     for mass, prob in dist:
-        mz = (mass - z * ELECTRON_MASS) / z
+        if z == 0:
+            mz = mass  # 中性分子：m/z = M
+        else:
+            mz = (mass - z * ELECTRON_MASS) / z
         peaks.append(IsotopePeak(
             mass=mass,
             abundance=prob,
