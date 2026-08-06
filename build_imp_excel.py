@@ -122,7 +122,8 @@ ws['A5'].font = FONT_LABEL
 
 # 默认示例：C2D3 = C natural 2 + H(氘 D=质量数2) 3
 defaults = [
-    ('C', 'natural', 2),
+    ('C', 'natural', 1),
+    ('H', 'natural', 2),
     ('H', '2', 3),
 ]
 N_COLS = 26  # B..AA

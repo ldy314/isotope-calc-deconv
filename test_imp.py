@@ -110,6 +110,30 @@ def test_same_element_natural_merge():
     assert len(out) == 11, f"应 11 个，实际 {len(out)}"
     print(f"[OK] 同元素合并+natural下限 → 全天然 {out[0]['name']}，共 {len(out)} 个")
 
+def test_ch2d3_natural_fixed():
+    """用户核心规则：输入 CH2D3（C natural 1 + H natural 2 + D 3）
+    输出应只含 CH3D2、CH4D、CH5（H natural 只增不减，从 3→4→5）
+    不允许出现 CHD4、CD5（H natural 从 2 减少到 1、0）"""
+    cols = [
+        imp.ElementColumn('C', 'natural', 1),
+        imp.ElementColumn('H', 'natural', 2),
+        imp.ElementColumn('H', '2', 3),
+    ]
+    out = imp.enumerate_impurities(cols, z=0)
+    names = [r['name'] for r in out]
+    # 内容集合必须恰好是 {CH3D2, CH4D, CH5}（无电荷）
+    expected = {'CH₃D₂', 'CH₄D', 'CH₅'}
+    assert set(names) == expected, f"实际: {names}"
+    # 所有杂质 H natural ≥ 输入值 2（natural 数字不变/只增）
+    for r in out:
+        h_nat = sum(c for e, i, c in zip(r['elements'], r['isos'], r['counts'])
+                    if e == 'H' and i == 'natural')
+        assert h_nat >= 2, f"H natural {h_nat} < 2: {r['name']}"
+    # 显式排除 CHD4、CD5
+    for bad in ('CHD₄', 'CD₅'):
+        assert bad not in names, f"不应出现 {bad}: {names}"
+    print(f"[OK] CH2D3 → {sorted(names)}，H natural ≥2，无 CHD4/CD5")
+
 def test_dedup():
     """去重：构造排列顺序不同但分子式相同的组合（人为构造 cols 乱序），
     验证 _canonical_key 归一化一致"""
@@ -128,5 +152,6 @@ if __name__ == '__main__':
     test_zero_count_mod_ignored()
     test_d_and_t_symbols()
     test_same_element_natural_merge()
+    test_ch2d3_natural_fixed()
     test_dedup()
     print("\n全部测试通过 ✔")
