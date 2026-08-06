@@ -11,7 +11,11 @@ venv/
 
 # 工具临时文件
 _*.py
+_*.txt
 _opt_work/
+
+# 中间产物（xlsx 由 build_excel.py 生成，xlsm 为最终交付）
+ExactMass_Calculator_v2.xlsx
 
 # 编辑器
 .vscode/

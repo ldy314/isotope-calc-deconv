@@ -1,0 +1,290 @@
+[
+  {
+    "element": "H",
+    "mass_number": 1,
+    "mass": 1.00782503223,
+    "abundance": 0.999885
+  },
+  {
+    "element": "H",
+    "mass_number": 2,
+    "mass": 2.01410177812,
+    "abundance": 0.000115
+  },
+  {
+    "element": "C",
+    "mass_number": 12,
+    "mass": 12.0,
+    "abundance": 0.9893
+  },
+  {
+    "element": "C",
+    "mass_number": 13,
+    "mass": 13.00335483507,
+    "abundance": 0.0107
+  },
+  {
+    "element": "N",
+    "mass_number": 14,
+    "mass": 14.00307400443,
+    "abundance": 0.99636
+  },
+  {
+    "element": "N",
+    "mass_number": 15,
+    "mass": 15.00010889888,
+    "abundance": 0.00364
+  },
+  {
+    "element": "O",
+    "mass_number": 16,
+    "mass": 15.99491461957,
+    "abundance": 0.99757
+  },
+  {
+    "element": "O",
+    "mass_number": 17,
+    "mass": 16.9991317565,
+    "abundance": 0.00038
+  },
+  {
+    "element": "O",
+    "mass_number": 18,
+    "mass": 17.99915961286,
+    "abundance": 0.00205
+  },
+  {
+    "element": "F",
+    "mass_number": 19,
+    "mass": 18.99840316273,
+    "abundance": 1.0
+  },
+  {
+    "element": "Si",
+    "mass_number": 28,
+    "mass": 27.97692653465,
+    "abundance": 0.92223
+  },
+  {
+    "element": "Si",
+    "mass_number": 29,
+    "mass": 28.9764946649,
+    "abundance": 0.04685
+  },
+  {
+    "element": "Si",
+    "mass_number": 30,
+    "mass": 29.973770136,
+    "abundance": 0.03092
+  },
+  {
+    "element": "P",
+    "mass_number": 31,
+    "mass": 30.97376199842,
+    "abundance": 1.0
+  },
+  {
+    "element": "S",
+    "mass_number": 32,
+    "mass": 31.9720711744,
+    "abundance": 0.9499
+  },
+  {
+    "element": "S",
+    "mass_number": 33,
+    "mass": 32.9714589098,
+    "abundance": 0.0075
+  },
+  {
+    "element": "S",
+    "mass_number": 34,
+    "mass": 33.967867004,
+    "abundance": 0.0425
+  },
+  {
+    "element": "S",
+    "mass_number": 36,
+    "mass": 35.96708071,
+    "abundance": 0.0001
+  },
+  {
+    "element": "Cl",
+    "mass_number": 35,
+    "mass": 34.968852682,
+    "abundance": 0.7576
+  },
+  {
+    "element": "Cl",
+    "mass_number": 37,
+    "mass": 36.965902602,
+    "abundance": 0.2424
+  },
+  {
+    "element": "Br",
+    "mass_number": 79,
+    "mass": 78.9183376,
+    "abundance": 0.5069
+  },
+  {
+    "element": "Br",
+    "mass_number": 81,
+    "mass": 80.9162897,
+    "abundance": 0.4931
+  },
+  {
+    "element": "I",
+    "mass_number": 127,
+    "mass": 126.9044719,
+    "abundance": 1.0
+  },
+  {
+    "element": "Na",
+    "mass_number": 23,
+    "mass": 22.989769282,
+    "abundance": 1.0
+  },
+  {
+    "element": "Mg",
+    "mass_number": 24,
+    "mass": 23.985041697,
+    "abundance": 0.7899
+  },
+  {
+    "element": "Mg",
+    "mass_number": 25,
+    "mass": 24.985836976,
+    "abundance": 0.1
+  },
+  {
+    "element": "Mg",
+    "mass_number": 26,
+    "mass": 25.982592968,
+    "abundance": 0.1101
+  },
+  {
+    "element": "Al",
+    "mass_number": 27,
+    "mass": 26.98153853,
+    "abundance": 1.0
+  },
+  {
+    "element": "K",
+    "mass_number": 39,
+    "mass": 38.9637064864,
+    "abundance": 0.932581
+  },
+  {
+    "element": "K",
+    "mass_number": 40,
+    "mass": 39.963998166,
+    "abundance": 0.000117
+  },
+  {
+    "element": "K",
+    "mass_number": 41,
+    "mass": 40.9618252579,
+    "abundance": 0.067302
+  },
+  {
+    "element": "Ca",
+    "mass_number": 40,
+    "mass": 39.962590863,
+    "abundance": 0.96941
+  },
+  {
+    "element": "Ca",
+    "mass_number": 42,
+    "mass": 41.95861783,
+    "abundance": 0.00647
+  },
+  {
+    "element": "Ca",
+    "mass_number": 43,
+    "mass": 42.95876644,
+    "abundance": 0.00135
+  },
+  {
+    "element": "Ca",
+    "mass_number": 44,
+    "mass": 43.95548156,
+    "abundance": 0.02086
+  },
+  {
+    "element": "Ca",
+    "mass_number": 46,
+    "mass": 45.953689,
+    "abundance": 4e-05
+  },
+  {
+    "element": "Ca",
+    "mass_number": 48,
+    "mass": 47.95252276,
+    "abundance": 0.00187
+  },
+  {
+    "element": "Fe",
+    "mass_number": 54,
+    "mass": 53.93960899,
+    "abundance": 0.05845
+  },
+  {
+    "element": "Fe",
+    "mass_number": 56,
+    "mass": 55.93493633,
+    "abundance": 0.91754
+  },
+  {
+    "element": "Fe",
+    "mass_number": 57,
+    "mass": 56.93539284,
+    "abundance": 0.02119
+  },
+  {
+    "element": "Fe",
+    "mass_number": 58,
+    "mass": 57.93327443,
+    "abundance": 0.00282
+  },
+  {
+    "element": "Cu",
+    "mass_number": 63,
+    "mass": 62.92959772,
+    "abundance": 0.6915
+  },
+  {
+    "element": "Cu",
+    "mass_number": 65,
+    "mass": 64.9277897,
+    "abundance": 0.3085
+  },
+  {
+    "element": "Zn",
+    "mass_number": 64,
+    "mass": 63.92914201,
+    "abundance": 0.4917
+  },
+  {
+    "element": "Zn",
+    "mass_number": 66,
+    "mass": 65.92603381,
+    "abundance": 0.2773
+  },
+  {
+    "element": "Zn",
+    "mass_number": 67,
+    "mass": 66.92712775,
+    "abundance": 0.0404
+  },
+  {
+    "element": "Zn",
+    "mass_number": 68,
+    "mass": 67.92484455,
+    "abundance": 0.1845
+  },
+  {
+    "element": "Zn",
+    "mass_number": 70,
+    "mass": 69.9253192,
+    "abundance": 0.0061
+  }
+]
