@@ -9,9 +9,10 @@ Option Explicit
 
 ' ============================================================
 ' RunTheo - 调用 Python theo.py 计算前20同位素峰并回填
-' 架构：VBA 内置 Shell() 启动 Python（隐藏窗口），轮询输出文件等待完成。
+' 架构：VBA 内置 Shell() 直接启动 Python（无重定向！），
+'       theo.py 用 --out 参数自行写结果文件（成功→JSON，失败→theo_err.txt）。
 ' 关键设计：
-'   - stderr 重定向到独立错误文件（theo_err.txt），避免 2>&1 混入 JSON
+'   - 不使用 ">" 重定向：VBA Shell 不经 cmd.exe，重定向不生效（已踩坑）
 '   - 结果文件读取用 Tristate 0 (ASCII)，与 theo.py 纯 ASCII JSON 输出匹配
 '   - 状态写入 F2 单元格，含每一步的进度/错误
 ' 依赖：theo.py 与 .xlsm 同目录；本机 Python + molmass
@@ -81,10 +82,10 @@ Sub RunTheo()
     If fso.FileExists(jsonPath) Then fso.DeleteFile jsonPath
     If fso.FileExists(errPath) Then fso.DeleteFile errPath
 
-    ' stderr 单独重定向到 errPath，stdout 到 jsonPath
+    ' 直接调用 theo.py --out 模式（无重定向，theo.py 自行写文件）
     cmd = """" & pyExe & """ """ & theoPath & """ --elements " & Trim(args) & _
           " --z " & CStr(z) & " --tol " & Replace(CStr(tol), ",", ".") & _
-          " --json > """ & jsonPath & """ 2> """ & errPath & """"
+          " --json --out """ & jsonPath & """"
 
     ' --- 用 Shell 启动（隐藏窗口），随后轮询输出文件 ---
     pid = Shell(cmd, 0)
@@ -192,11 +193,12 @@ Function GetPythonExe() As String
     GetPythonExe = ""
     For i = LBound(cands) To UBound(cands)
         If Len(Dir(cands(i))) > 0 Or cands(i) = "python" Then
-            ' 验证该 Python 可用且能 import molmass
+            ' 验证该 Python 可用且能 import molmass：
+            ' 让 python 自行写探针文件（不用重定向）
             outFile = Environ("TEMP") & "\theo_pycheck.txt"
             Set fso = CreateObject("Scripting.FileSystemObject")
             If fso.FileExists(outFile) Then fso.DeleteFile outFile
-            testCmd = """" & cands(i) & """ -c ""import molmass; print('OK')"" > """ & outFile & """ 2>&1"
+            testCmd = """" & cands(i) & """ -c ""import molmass; open(r'" & outFile & "', 'w').write('OK')"""
             Call Shell(testCmd, 0)
             waited = 0
             Do While waited < 50

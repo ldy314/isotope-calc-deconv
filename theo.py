@@ -209,6 +209,9 @@ def parse_args(argv=None):
     parser.add_argument("--tol", type=float, default=0.001, help="质量精度（峰合并容差 Da，默认 0.001）")
     parser.add_argument("--top", type=int, default=20, help="输出峰数（默认 20）")
     parser.add_argument("--json", action="store_true", help="JSON 输出（供 Excel 回填）")
+    parser.add_argument("--out", metavar="FILE", default=None,
+                        help="结果文件路径：成功时写 JSON，失败时写同目录 theo_err.txt"
+                             "（供 VBA 直接调用，无需 shell 重定向）")
     return parser.parse_args(argv)
 
 
@@ -221,7 +224,7 @@ def main(argv=None):
         except Exception:
             pass
     if len(args.elements) % 3 != 0:
-        print("错误：--elements 必须按 (元素, 同位素, 个数) 三元组提供", file=sys.stderr)
+        _emit_error(args, "错误：--elements 必须按 (元素, 同位素, 个数) 三元组提供")
         return 1
     columns = []
     for i in range(0, len(args.elements), 3):
@@ -229,26 +232,20 @@ def main(argv=None):
         try:
             columns.append(ElementColumn(el, iso, int(cnt)))
         except ValueError as e:
-            print(f"错误：{e}", file=sys.stderr)
+            _emit_error(args, f"错误：{e}")
             return 1
     try:
         peaks = compute_theoretical_spectrum(columns, z=args.z, tol=args.tol, top_n=args.top)
     except ValueError as e:
-        print(f"错误：{e}", file=sys.stderr)
+        _emit_error(args, f"错误：{e}")
         return 1
 
+    if args.out:
+        # --out 模式：成功写 JSON 到指定文件；异常已由 _emit_error 写 theo_err.txt
+        _write_json(args, peaks)
+        return 0
     if args.json:
-        # 每峰一行的 JSON（VBA 逐行解析：每行含 rank/mass/mz/abundance）
-        # 纯 ASCII 输出，VBA 用 Tristate 0 (ASCII) 读取
-        lines = ['{"z": %d, "tol": %s, "peaks": [' % (args.z, repr(args.tol))]
-        for i, p in enumerate(peaks):
-            comma = ',' if i < len(peaks) - 1 else ''
-            lines.append(
-                '{"rank": %d, "mass": %.9f, "mz": %.9f, "abundance": %.9f}%s'
-                % (i + 1, p.mass, p.mz, p.rel_abundance, comma)
-            )
-        lines.append(']}')
-        print('\n'.join(lines))
+        print(_json_text(args, peaks))
         return 0
 
     print(f"{'#':>3} {'中性精确质量 (u)':>18} {'m/z':>14} {'相对丰度%':>12}")
@@ -256,6 +253,39 @@ def main(argv=None):
     for i, p in enumerate(peaks):
         print(f"{i + 1:>3} {p.mass:>18.6f} {p.mz:>14.6f} {p.rel_abundance:>11.4f}")
     return 0
+
+
+def _json_text(args, peaks) -> str:
+    """生成每峰一行的 JSON 文本（VBA 逐行解析：每行含 rank/mass/mz/abundance）"""
+    lines = ['{"z": %d, "tol": %s, "peaks": [' % (args.z, repr(args.tol))]
+    for i, p in enumerate(peaks):
+        comma = ',' if i < len(peaks) - 1 else ''
+        lines.append(
+            '{"rank": %d, "mass": %.9f, "mz": %.9f, "abundance": %.9f}%s'
+            % (i + 1, p.mass, p.mz, p.rel_abundance, comma)
+        )
+    lines.append(']}')
+    return '\n'.join(lines)
+
+
+def _write_json(args, peaks) -> None:
+    """把 JSON 写入 --out 指定的文件（UTF-8）"""
+    with open(args.out, 'w', encoding='utf-8') as f:
+        f.write(_json_text(args, peaks))
+
+
+def _emit_error(args, message: str) -> None:
+    """输出错误：--out 模式写入 <out 同目录>/theo_err.txt，否则打印到 stderr"""
+    if args.out:
+        import os
+        err_path = os.path.join(os.path.dirname(os.path.abspath(args.out)), 'theo_err.txt')
+        try:
+            with open(err_path, 'w', encoding='utf-8') as f:
+                f.write(message)
+            return
+        except OSError:
+            pass
+    print(message, file=sys.stderr)
 
 
 if __name__ == "__main__":
