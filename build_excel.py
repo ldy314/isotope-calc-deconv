@@ -268,14 +268,15 @@ ws['B10'].border = BORDER
 ws['B10'].fill = FILL_INPUT
 ws['B10'].number_format = '0.000'
 
-ws['A11'] = '丰度阈值 (%)'
+ws['A11'] = '丰度阈值'
 ws['A11'].font = FONT_LABEL
 ws['B11'] = 0.05
 ws['B11'].font = FONT_BODY
 ws['B11'].alignment = CENTER
 ws['B11'].border = BORDER
 ws['B11'].fill = FILL_INPUT
-ws['B11'].number_format = '0.00'
+# 显示为百分比样式（值 0.05 = 0.05%，用户直接输入 0.1 即 0.1%）
+ws['B11'].number_format = '0.00"%"'
 
 # --- 输出表 ---
 ws['A12'] = '输出：丰度前20同位素峰（按质量升序）'
