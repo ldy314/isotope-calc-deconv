@@ -174,7 +174,7 @@ for i in range(N_COLS):
 for col in range(2, 2 + N_COLS):
     ws.column_dimensions[get_column_letter(col)].width = 9
 
-# --- 分子式显示（B7 自动生成，同 v2 的下标/上标方案） ---
+# --- 分子式显示（B7 自动生成，同 v2 的下标/上标方案 + 电荷） ---
 SUB_MAP_D = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
              '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉'}
 SUB_MAP_U = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
@@ -206,31 +206,57 @@ ws['A7'] = '分子式（自动）'
 ws['A7'].font = FONT_LABEL
 ws.merge_cells('B7:J7')
 ws['B7'].font = FONT_BODY
-ws['B7'].value = '=CONCATENATE(B6, C6, D6, E6, F6, G6, H6, I6, J6, K6, L6, M6, N6, O6, P6, Q6, R6, S6, T6, U6, V6, W6, X6, Y6, Z6, AA6)'
+
+# 电荷上标（同 v2）：z=1→⁺，z=2→²⁺，z=-1→⁻，z=-2→²⁻，z=0/空→无
+CHARGE_SUP = {
+    '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+    '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+}
+abs_z = _sub_formula('TEXT(ABS(B9),"0")', CHARGE_SUP)
+charge_abs = (
+    f'IF(ABS(B9)=1,'
+    f'IF(B9>0,"⁺","⁻"),'
+    f'{abs_z}&IF(B9>0,"⁺","⁻"))'
+)
+charge_suffix = f'IF(OR(B9="",B9=0),"",{charge_abs})'
+ws['B7'].value = (
+    '=CONCATENATE(B6, C6, D6, E6, F6, G6, H6, I6, J6, K6, L6, M6, N6, O6, P6, Q6, R6, S6, T6, U6, V6, W6, X6, Y6, Z6, AA6)'
+    ' & ' + charge_suffix
+)
+
+# --- 电荷参数区 ---
+ws['A9'] = '电荷数 z'
+ws['A9'].font = FONT_LABEL
+ws['B9'] = 1
+ws['B9'].font = FONT_BODY
+ws['B9'].alignment = CENTER
+ws['B9'].border = BORDER
+ws['B9'].fill = FILL_INPUT
 
 # --- 使用说明 ---
-ws['A9'] = '使用说明：'
-ws['A9'].font = FONT_LABEL
+ws['A11'] = '使用说明：'
+ws['A11'].font = FONT_LABEL
 notes = [
     '1. 输入一个同位素修饰的分子式：第3行选元素，第4行选同位素种类（natural=天然，或质量数如 2=氘D、13=¹³C），第5行输入原子个数',
-    '2. 点击"列举杂质"按钮，枚举该修饰分子与天然化合物之间的所有同位素取代杂质（含天然形式，不含输入本身）',
-    '3. 例：输入 C2D3 → 输出 C2H3（全天然）、C2H2D、C2HD2',
-    '4. natural 列（如 C natural）不参与枚举——天然同位素杂质（如 ¹³C）忽略，不列举',
-    '5. 多个修饰同位素列时按组合枚举（笛卡尔积）；修饰原子数为 n 时输出 n 个杂质',
-    '6. 需要本机安装 Python 与 molmass 库：pip install molmass',
+    '2. 第9行电荷数 z（可正可负，0=中性分子不加电荷）',
+    '3. 点击"列举杂质"按钮，枚举该修饰分子与天然化合物之间的所有同位素取代杂质（含天然形式，不含输入本身）',
+    '4. 例：输入 C2D3（z=1）→ 输出 C₂H₃⁺（全天然）、C₂H₂D⁺、C₂HD₂⁺',
+    '5. natural 列（如 C natural）不参与枚举——天然同位素杂质（如 ¹³C）忽略，不列举',
+    '6. 多个修饰同位素列时按组合枚举（笛卡尔积）；修饰原子数为 n 时输出 n 个杂质',
+    '7. 需要本机安装 Python 与 molmass 库：pip install molmass',
 ]
 for i, note in enumerate(notes):
-    cell = ws[f'A{10 + i}']
+    cell = ws[f'A{12 + i}']
     cell.value = note
     cell.font = Font(name='微软雅黑', size=10, color='595959')
 
 # --- 输出区 ---
-ws['A14'] = '输出：同位素取代杂质（每杂质 4 行：名称 / 元素 / 同位素 / 个数）'
-ws['A14'].font = FONT_LABEL
+ws['A20'] = '输出：同位素取代杂质（每杂质 4 行：分子式 / 元素 / 同位素种类 / 原子个数）'
+ws['A20'].font = FONT_LABEL
 
-# 输出列样式：B..K 共 10 列
+# 输出列样式：A=行标签，B..K 共 10 列数据
 OUT_ROWS = 120  # 30 杂质 × 4 行
-for r in range(15, 15 + OUT_ROWS):
+for r in range(21, 21 + OUT_ROWS):
     ws.cell(row=r, column=1).font = Font(name='微软雅黑', size=10, bold=True, color='1F4E79')
     for c in range(2, 12):
         cell = ws.cell(row=r, column=c)
@@ -249,8 +275,8 @@ ws.column_dimensions['E'].width = 12
 ws.column_dimensions['F'].width = 12
 
 # --- 按钮说明 ---
-ws['A150'] = '▶ 按钮"列举杂质"由构建脚本自动放置（E40 区域）'
-ws['A150'].font = Font(name='微软雅黑', size=10, bold=True, color='C00000')
+ws['A156'] = '▶ 按钮"列举杂质"由构建脚本自动放置（E40 区域）'
+ws['A156'].font = Font(name='微软雅黑', size=10, bold=True, color='C00000')
 
 wb.save(OUT)
 print(f'已保存: {OUT}（此为 .xlsx 中间格式，随后由注入脚本注入宏并另存为 .xlsm）')

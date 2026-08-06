@@ -12,14 +12,16 @@ Option Explicit
 ' 架构：与 RunTheo 一致：Shell() 启动 Python（无重定向），
 '       imp.py 用 --out 自行写结果文件（成功→文本协议，失败→imp_err.txt）。
 ' 结果文件协议（每杂质 4 行）：
-'   # <名称>                       ← 名称行
-'   <元素以|分隔>                  ← 数据行1
-'   <同位素以|分隔>                ← 数据行2
-'   <个数以|分隔>                  ← 数据行3
+'   # <名称(Unicode 分子式，含电荷)>   ← 名称行
+'   <元素以|分隔>                      ← 数据行1
+'   <同位素以|分隔>                    ← 数据行2
+'   <个数以|分隔>                      ← 数据行3
+' 读取：ADODB.Stream + Charset=utf-8（名称含 ²⁺/₁₃ 等 Unicode 字符）
 ' 回填：从 Calculator 第 16 行开始，每个杂质 4 行块：
-'   [N] 名称   | (第 2 列起填元素)
-'             | (第 2 列起填同位素)
-'             | (第 2 列起填个数)
+'   [N] 分子式  | (A列)     (第 2 列起填元素)
+'   元素        | (A列)     (第 2 列起填同位素)
+'   同位素种类  | (A列)     (第 2 列起填个数)
+'   原子个数    | (A列)
 ' 状态写入 F2 单元格
 ' ============================================================
 Sub RunImp()
@@ -45,8 +47,9 @@ Sub RunImp()
     Dim j As Long
     Dim curRow As Long
     Dim nImp As Long
-    Dim blockPos As Integer   ' 0=名称行, 1=元素, 2=同位素, 3=个数
-    Dim val As String
+    Dim blockPos As Integer   ' 1=元素, 2=同位素, 3=个数
+    Dim z As Long
+    Dim stream As Object
 
     On Error GoTo ErrHandler
 
@@ -77,6 +80,13 @@ Sub RunImp()
         Exit Sub
     End If
 
+    ' --- 电荷 z（B9） ---
+    If IsNumeric(ws.Cells(9, 2).Value) Then
+        z = CLng(ws.Cells(9, 2).Value)
+    Else
+        z = 1
+    End If
+
     pyExe = GetPythonExe()
     If pyExe = "" Then
         ws.Cells(2, 6).Value = "错误：未找到 Python，请安装并执行 pip install molmass"
@@ -90,7 +100,7 @@ Sub RunImp()
 
     ' 直接调用 imp.py --out 模式
     cmd = """" & pyExe & """ """ & impPath & """ --elements " & Trim(args) & _
-          " --out """ & outPath & """"
+          " --z " & CStr(z) & " --out """ & outPath & """"
 
     pid = Shell(cmd, 0)
     If pid = 0 Then
@@ -121,15 +131,20 @@ Sub RunImp()
         Exit Sub
     End If
 
-    ' --- 读取结果（Tristate 0 = ASCII；imp.py 输出纯 ASCII 协议） ---
-    Set file = fso.OpenTextFile(outPath, 1, False, 0)
-    allText = file.ReadAll
-    file.Close
+    ' --- 读取结果（UTF-8，用 ADODB.Stream） ---
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 2          ' adTypeText
+    stream.Charset = "utf-8"
+    stream.Open
+    stream.LoadFromFile outPath
+    allText = stream.ReadText
+    stream.Close
+    Set stream = Nothing
 
     lines = Split(allText, vbLf)
 
-    ' --- 先清空旧输出区（15 行起，120 行 = 30 杂质 × 4 行块） ---
-    For r = 15 To 134
+    ' --- 先清空旧输出区（21 行起，120 行 = 30 杂质 × 4 行块） ---
+    For r = 21 To 140
         ws.Cells(r, 1).Value = ""
         For j = 2 To 12
             ws.Cells(r, j).Value = ""
@@ -137,7 +152,7 @@ Sub RunImp()
     Next r
 
     ' --- 回填杂质块（状态机） ---
-    curRow = 15
+    curRow = 21
     nImp = 0
     blockPos = 0
     For i = 0 To UBound(lines)
@@ -145,18 +160,23 @@ Sub RunImp()
         If ln = "" Then GoTo nextLine
 
         If Left(ln, 1) = "#" Then
-            ' 名称行；跳过头部 "# imp v1 | total N" 与 "# none"
+            ' 名称行；跳过头部 "# imp v1 | ..." 与 "# none"
             name = Trim(Mid(ln, 2))
             If InStr(name, "imp v1") > 0 Then GoTo nextLine
             If InStr(name, "none") > 0 Then GoTo nextLine
             nImp = nImp + 1
+            ' 行1：分子式（A 列）
             ws.Cells(curRow, 1).Value = "[" & nImp & "] " & name
+            ' 行2~4：标签写在 A 列
+            ws.Cells(curRow + 1, 1).Value = "元素"
+            ws.Cells(curRow + 2, 1).Value = "同位素种类"
+            ws.Cells(curRow + 3, 1).Value = "原子个数"
             blockPos = 1
         ElseIf blockPos >= 1 And blockPos <= 3 Then
             ' 数据行：以 | 分隔，写入第 2 列起
             parts = Split(ln, "|")
             For j = 0 To UBound(parts)
-                ws.Cells(curRow, 2 + j).Value = Trim(parts(j))
+                ws.Cells(curRow + blockPos, 2 + j).Value = Trim(parts(j))
             Next j
             If blockPos = 3 Then
                 curRow = curRow + 4   ' 下一个杂质块

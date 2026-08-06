@@ -62,7 +62,7 @@ def is_natural_iso(iso: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 核素符号（用于分子式平文名称）
+# 核素符号与分子式名称（Unicode 上/下标）
 # ---------------------------------------------------------------------------
 # 常见同位素专用符号：H-2 → D（氘）、H-3 → T（氚）
 SPECIAL_SYMBOLS = {
@@ -70,10 +70,33 @@ SPECIAL_SYMBOLS = {
     ('H', 3): 'T',
 }
 
+SUB_D = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+         '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉'}
+SUP_D = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+         '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹'}
+
+
+def _to_sub(n: int) -> str:
+    return ''.join(SUB_D[d] for d in str(n))
+
+
+def _to_sup(n: int) -> str:
+    return ''.join(SUP_D[d] for d in str(n))
+
 
 def iso_symbol(element: str, mass_number: int) -> str:
-    """修饰同位素的平文符号：H2 → D，H3 → T，其他 → 13C 样式"""
-    return SPECIAL_SYMBOLS.get((element, mass_number), f"{mass_number}{element}")
+    """修饰同位素符号：H2 → D、H3 → T，其他 → ¹³C 样式（质量数上标）"""
+    if (element, mass_number) in SPECIAL_SYMBOLS:
+        return SPECIAL_SYMBOLS[(element, mass_number)]
+    return _to_sup(mass_number) + element
+
+
+def charge_suffix(z: int) -> str:
+    """电荷上标：z=1 → ⁺，z=2 → ²⁺，z=-1 → ⁻，z=-2 → ²⁻，z=0 → ''"""
+    if z == 0:
+        return ''
+    mag = '' if abs(z) == 1 else _to_sup(abs(z))
+    return mag + ('⁺' if z > 0 else '⁻')
 
 
 # ---------------------------------------------------------------------------
@@ -92,18 +115,19 @@ def _split_mod_column(col: ElementColumn, k: int) -> List[Tuple[str, str, int]]:
     return out
 
 
-def enumerate_impurities(columns: List[ElementColumn]) -> List[dict]:
+def enumerate_impurities(columns: List[ElementColumn], z: int = 1) -> List[dict]:
     """枚举所有同位素取代杂质。
 
     返回列表，每项：
       {
-        'name': 平文分子式名称（如 C2H3 / C2HD2 / C2H2D）,
+        'name': 分子式名称（含电荷，如 C₂H₃⁺ / C₂HD₂⁺）,
         'elements': [元素...],
         'isos':     [同位素...]（'natural' 或质量数字符串）,
         'counts':   [原子个数...],
         'mod_total': 保留的修饰原子总数（用于排序）,
       }
     按保留修饰原子总数升序（天然形式最前 → 接近输入形式在后）。
+    z: 电荷数（默认 1，加在分子式名称末尾）
     """
     if not columns:
         raise ValueError("元素表为空")
@@ -127,7 +151,7 @@ def enumerate_impurities(columns: List[ElementColumn]) -> List[dict]:
         for mc, k in zip(mod_cols, k_comb):
             cols.extend(_split_mod_column(mc, k))
 
-        name = formula_name(cols)
+        name = formula_name(cols, z)
         results.append({
             'name': name,
             'elements': [c[0] for c in cols],
@@ -141,9 +165,10 @@ def enumerate_impurities(columns: List[ElementColumn]) -> List[dict]:
     return results
 
 
-def formula_name(cols: List[Tuple[str, str, int]]) -> str:
-    """生成分子式平文名称（计数为 1 时省略数字）。
-    天然列 → 元素符号（如 C / H）；修饰列 → 核素符号（D / 13C）。"""
+def formula_name(cols: List[Tuple[str, str, int]], z: int = 1) -> str:
+    """生成分子式名称（Unicode 下标/上标，计数为 1 时省略数字）。
+    天然列 → 元素符号（如 C / H）；修饰列 → 核素符号（D / ¹³C）。
+    末尾附加电荷上标（z=0 不加）。"""
     parts = []
     for elem, iso, cnt in cols:
         if cnt == 0:
@@ -152,8 +177,8 @@ def formula_name(cols: List[Tuple[str, str, int]]) -> str:
             symbol = elem
         else:
             symbol = iso_symbol(elem, int(iso))
-        parts.append(symbol if cnt == 1 else f"{symbol}{cnt}")
-    return ''.join(parts)
+        parts.append(symbol if cnt == 1 else f"{symbol}{_to_sub(cnt)}")
+    return ''.join(parts) + charge_suffix(z)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +195,7 @@ def parse_args(argv=None):
         help="元素表：三元素一组 (元素, 同位素, 个数)。同位素用 'natural' 或质量数（如 '2'=氘）。"
              "例：C natural 2 H 2 3",
     )
+    parser.add_argument("--z", type=int, default=1, help="电荷数（默认 1，0=中性不加电荷）")
     parser.add_argument("--out", metavar="FILE", default=None,
                         help="结果文件：成功写文本协议（每杂质4行），失败写同目录 imp_err.txt")
     return parser.parse_args(argv)
@@ -211,14 +237,14 @@ def main(argv=None):
             return 1
 
     try:
-        impurities = enumerate_impurities(columns)
+        impurities = enumerate_impurities(columns, z=args.z)
     except ValueError as e:
         _emit_error(args, f"错误：{e}")
         return 1
 
     if args.out:
-        with open(args.out, 'w', encoding='ascii') as f:
-            f.write(f"# imp v1 | total {len(impurities)}\n")
+        with open(args.out, 'w', encoding='utf-8') as f:
+            f.write(f"# imp v1 | total {len(impurities)} | z {args.z}\n")
             for r in impurities:
                 f.write(_impurity_block(r) + '\n')
             if not impurities:
