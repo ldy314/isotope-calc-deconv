@@ -81,6 +81,37 @@ for row in iso_rows:
         ELEM_LIST.append(row['element'])
 
 # ---------------------------------------------------------------------------
+# 同位素下拉辅助区（IsotopeData sheet 右侧 F 列起）
+# 每个元素占一列：第1行=元素名，其下=natural + 各质量数（字符串）。
+# 命名区域 iso_<元素> 指向该列，Calculator 同位素行用 =INDIRECT("iso_"&元素) 动态引用。
+# ---------------------------------------------------------------------------
+ISO_HELPER_START_COL = 6  # F 列
+for idx, elem in enumerate(ELEM_LIST):
+    hcol = ISO_HELPER_START_COL + idx
+    HL = get_column_letter(hcol)
+    # 表头：元素名
+    head = ws_iso.cell(row=1, column=hcol, value=elem)
+    head.font = FONT_HEADER
+    head.fill = FILL_HEADER
+    head.alignment = CENTER
+    head.border = BORDER
+    # 选项：natural + 该元素全部质量数（字符串，避免 12 被显示为数字）
+    opts = ['natural'] + [str(r['mass_number']) for r in iso_rows if r['element'] == elem]
+    for j, opt in enumerate(opts, start=2):
+        ccell = ws_iso.cell(row=j, column=hcol, value=opt)
+        ccell.font = FONT_BODY
+        ccell.alignment = CENTER
+        ccell.border = BORDER
+    # 命名区域 iso_<elem>
+    last_row = 1 + len(opts)
+    wb.defined_names.add(openpyxl.workbook.defined_name.DefinedName(
+        f'iso_{elem}',
+        attr_text=f"IsotopeData!${HL}$2:${HL}${last_row}",
+    ))
+ws_iso.column_dimensions['F'].width = 10
+ws_iso.column_dimensions['G'].width = 10
+
+# ---------------------------------------------------------------------------
 # Calculator sheet
 # ---------------------------------------------------------------------------
 ws = wb.create_sheet('Calculator')
@@ -129,7 +160,7 @@ for i in range(N_COLS):
     ws.add_data_validation(dv3)
     dv3.add(cell3)
 
-    # 同位素种类行：数据校验下拉（"natural" + 该元素各质量数）
+    # 同位素种类行：级联下拉（=INDIRECT("iso_"&元素)），随元素动态更新
     cell4 = ws[f'{L}4']
     if i < len(defaults):
         cell4.value = defaults[i][1]
@@ -137,11 +168,12 @@ for i in range(N_COLS):
     cell4.font = FONT_BODY
     cell4.alignment = CENTER
     cell4.border = BORDER
-    # 下拉列表：列出该列当前元素的同位素选项（natural + 全部质量数）。
-    # 注意：改元素后下拉不自动更新，可手动输入质量数（如 13）——theo.py 支持自由输入
-    iso_opts = ['natural'] + [str(r['mass_number']) for r in iso_rows if r['element'] == (cell3.value or '')]
+    # 动态引用同位素辅助区的命名区域 iso_<元素>，改元素后下拉自动更新。
+    # 元素为空时返回空列表避免 #REF! 错误
     dv4 = openpyxl.worksheet.datavalidation.DataValidation(
-        type='list', formula1=f'="{",".join(iso_opts)}"', allow_blank=True,
+        type='list',
+        formula1=f'=IF({L}3="","",INDIRECT("iso_"&{L}3))',
+        allow_blank=True,
         showDropDown=False, showErrorMessage=True)
     dv4.error = 'natural 或质量数（如 13）'
     dv4.errorTitle = '无效同位素'
