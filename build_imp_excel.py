@@ -255,7 +255,7 @@ ws['A20'] = '输出：同位素取代杂质（每杂质 4 行：分子式 / 元�
 ws['A20'].font = FONT_LABEL
 
 # 输出列样式：A=行标签，B..K 共 10 列数据
-OUT_ROWS = 120  # 30 杂质 × 4 行
+OUT_ROWS = 600  # 150 杂质 × 4 行（组合数可能较多，预留大容量）
 for r in range(21, 21 + OUT_ROWS):
     ws.cell(row=r, column=1).font = Font(name='微软雅黑', size=10, bold=True, color='1F4E79')
     for c in range(2, 12):
@@ -275,8 +275,8 @@ ws.column_dimensions['E'].width = 12
 ws.column_dimensions['F'].width = 12
 
 # --- 按钮说明 ---
-ws['A156'] = '▶ 按钮"列举杂质"由构建脚本自动放置（E40 区域）'
-ws['A156'].font = Font(name='微软雅黑', size=10, bold=True, color='C00000')
+ws['A630'] = '▶ 按钮"列举杂质"由构建脚本自动放置（E40 区域）'
+ws['A630'].font = Font(name='微软雅黑', size=10, bold=True, color='C00000')
 
 wb.save(OUT)
 print(f'已保存: {OUT}（此为 .xlsx 中间格式，随后由注入脚本注入宏并另存为 .xlsm）')

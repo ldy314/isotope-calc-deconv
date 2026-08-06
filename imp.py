@@ -116,6 +116,21 @@ def _split_mod_column(col: ElementColumn, k: int) -> List[Tuple[str, str, int]]:
     return out
 
 
+def _canonical_key(cols: List[Tuple[str, str, int]]) -> tuple:
+    """规范化签名：按 (元素, 是否natural, 同位素) 排序分组合并，用于识别
+    '分子式一致但排列顺序不一致'的重复，并做去重。"""
+    from collections import OrderedDict
+    merged: "OrderedDict[tuple, int]" = OrderedDict()
+    for elem, iso, cnt in cols:
+        if cnt == 0:
+            continue
+        key = (elem, iso)
+        merged[key] = merged.get(key, 0) + cnt
+    items = sorted(merged.items(),
+                   key=lambda kv: (kv[0][0], 0 if is_natural_iso(kv[0][1]) else 1, kv[0][1]))
+    return tuple((e, i, c) for (e, i), c in items)
+
+
 def enumerate_impurities(columns: List[ElementColumn], z: int = 1) -> List[dict]:
     """枚举所有同位素取代杂质。
 
@@ -125,13 +140,21 @@ def enumerate_impurities(columns: List[ElementColumn], z: int = 1) -> List[dict]
         'elements': [元素...],
         'isos':     [同位素...]（'natural' 或质量数字符串）,
         'counts':   [原子个数...],
-        'mod_total': 保留的修饰原子总数（用于排序）,
+        'mod_total': 保留的修饰原子总数,
+        'replaced_total': 被替换回天然的修饰原子总数,
       }
-    按保留修饰原子总数升序（天然形式最前 → 接近输入形式在后）。
+
+    排序规则：
+      - 全天然（mod_total=0）排第一
+      - 其余按 replaced_total（替换修饰原子总数）升序：替换 1 个的在前 → 接近输入在后
+      - 同替换数按分子式名称升序
+    去重：分子式一致（含排列顺序不同）的杂质合并为一个（规范化签名去重）。
 
     关键规则：
       - 同元素多列（如 C natural 128 + ¹³C 3）的 natural 部分在输出中**合并为一列**
         （全天然杂质 = C natural 131，而非 C natural 128 + C natural 3）
+      - **每个元素 natural 计数 = 输入 natural 值 + 替换回的数量，永不小于输入值**
+        （如 C natural ≥ 2、N natural ≥ 12、O natural ≥ 5；适用所有元素）
       - 修饰列 (E, iso, n)：替换回天然 k 个，k = 1..n（k=n=全天然；k=0=输入本身，排除）
       - 输出列按元素分组：每元素先 natural 列（聚合后），再该元素各修饰列剩余部分
     """
@@ -153,17 +176,22 @@ def enumerate_impurities(columns: List[ElementColumn], z: int = 1) -> List[dict]
         # 无修饰同位素：没有可枚举的杂质
         return []
 
+    total_mod_atoms = sum(c.count for c in mod_cols)
+
     # 元素输出顺序：输入中所有列（natural+修饰）首次出现的顺序
     elem_order: List[str] = []
     for c in columns:
         if c.count > 0 and c.element not in elem_order:
             elem_order.append(c.element)
 
-    # 每个修饰列 k 的取值范围：1..n（k=0=输入本身，排除）
-    k_ranges = [range(1, c.count + 1) for c in mod_cols]
+    # 每个修饰列 k 的取值范围：0..n（k=0=该列保持输入状态；全 0 = 输入本身，排除）
+    k_ranges = [range(0, c.count + 1) for c in mod_cols]
     results = []
+    seen_keys = set()
 
     for k_comb in itertools.product(*k_ranges):
+        if all(k == 0 for k in k_comb):
+            continue  # 排除输入本身（所有修饰列都不替换）
         # 1) 计算每元素聚合后的 natural 计数 = 输入 natural 总数 + 各修饰列替换回的 k
         nat_total = dict(nat_counts)
         mod_remain: List[Tuple[str, str, int]] = []
@@ -183,17 +211,25 @@ def enumerate_impurities(columns: List[ElementColumn], z: int = 1) -> List[dict]
                 if el2 == elem:
                     cols.append((el2, iso2, cnt2))
 
-        name = formula_name(cols, z)
+        # 防御性去重：规范化签名（分子式一致但排列顺序不同 → 合并）
+        canon = _canonical_key(cols)
+        if canon in seen_keys:
+            continue
+        seen_keys.add(canon)
+
+        mod_total = sum(cnt for el, iso, cnt in cols if not is_natural_iso(iso))
+        replaced_total = total_mod_atoms - mod_total
         results.append({
-            'name': name,
+            'name': formula_name(cols, z),
             'elements': [c[0] for c in cols],
             'isos': [c[1] for c in cols],
             'counts': [c[2] for c in cols],
-            'mod_total': sum(cnt for el, iso, cnt in cols if not is_natural_iso(iso)),
+            'mod_total': mod_total,
+            'replaced_total': replaced_total,
         })
 
-    # 排序：保留修饰原子总数升序（天然 → 接近输入）
-    results.sort(key=lambda r: (r['mod_total'], r['name']))
+    # 排序：全天然第一；其余按替换修饰原子总数升序（替换1个在前→接近输入在后），同替换数按名称
+    results.sort(key=lambda r: (0 if r['mod_total'] == 0 else 1, r['replaced_total'], r['name']))
     return results
 
 

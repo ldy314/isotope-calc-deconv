@@ -143,8 +143,8 @@ Sub RunImp()
 
     lines = Split(allText, vbLf)
 
-    ' --- 先清空旧输出区（21 行起，120 行 = 30 杂质 × 4 行块） ---
-    For r = 21 To 140
+    ' --- 先清空旧输出区（21 行起，600 行 = 150 杂质 × 4 行块） ---
+    For r = 21 To 620
         ws.Cells(r, 1).Value = ""
         For j = 2 To 12
             ws.Cells(r, j).Value = ""
