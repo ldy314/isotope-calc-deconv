@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import sys
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -127,29 +128,60 @@ def enumerate_impurities(columns: List[ElementColumn], z: int = 1) -> List[dict]
         'mod_total': 保留的修饰原子总数（用于排序）,
       }
     按保留修饰原子总数升序（天然形式最前 → 接近输入形式在后）。
-    z: 电荷数（默认 1，加在分子式名称末尾）
+
+    关键规则：
+      - 同元素多列（如 C natural 128 + ¹³C 3）的 natural 部分在输出中**合并为一列**
+        （全天然杂质 = C natural 131，而非 C natural 128 + C natural 3）
+      - 修饰列 (E, iso, n)：替换回天然 k 个，k = 1..n（k=n=全天然；k=0=输入本身，排除）
+      - 输出列按元素分组：每元素先 natural 列（聚合后），再该元素各修饰列剩余部分
     """
     if not columns:
         raise ValueError("元素表为空")
 
-    natural_cols = [c for c in columns if c.is_natural and c.count > 0]
-    mod_cols = [c for c in columns if not c.is_natural and c.count > 0]
+    # natural 列按元素聚合计数（同元素多列合并）
+    nat_counts: OrderedDict[str, int] = OrderedDict()
+    mod_cols: List[ElementColumn] = []
+    for c in columns:
+        if c.count <= 0:
+            continue
+        if c.is_natural:
+            nat_counts[c.element] = nat_counts.get(c.element, 0) + c.count
+        else:
+            mod_cols.append(c)
 
     if not mod_cols:
         # 无修饰同位素：没有可枚举的杂质
         return []
+
+    # 元素输出顺序：输入中所有列（natural+修饰）首次出现的顺序
+    elem_order: List[str] = []
+    for c in columns:
+        if c.count > 0 and c.element not in elem_order:
+            elem_order.append(c.element)
 
     # 每个修饰列 k 的取值范围：1..n（k=0=输入本身，排除）
     k_ranges = [range(1, c.count + 1) for c in mod_cols]
     results = []
 
     for k_comb in itertools.product(*k_ranges):
-        # 组装该杂质的列
-        cols: List[Tuple[str, str, int]] = []
-        for nc in natural_cols:
-            cols.append((nc.element, 'natural', nc.count))
+        # 1) 计算每元素聚合后的 natural 计数 = 输入 natural 总数 + 各修饰列替换回的 k
+        nat_total = dict(nat_counts)
+        mod_remain: List[Tuple[str, str, int]] = []
         for mc, k in zip(mod_cols, k_comb):
-            cols.extend(_split_mod_column(mc, k))
+            nat_total[mc.element] = nat_total.get(mc.element, 0) + k
+            remain = mc.count - k
+            if remain > 0:
+                mod_remain.append((mc.element, mc.isotope, remain))
+
+        # 2) 按元素分组组装输出列：每元素 [natural 聚合列] + [该元素修饰剩余列]
+        cols: List[Tuple[str, str, int]] = []
+        for elem in elem_order:
+            n = nat_total.get(elem, 0)
+            if n > 0:
+                cols.append((elem, 'natural', n))
+            for el2, iso2, cnt2 in mod_remain:
+                if el2 == elem:
+                    cols.append((el2, iso2, cnt2))
 
         name = formula_name(cols, z)
         results.append({
@@ -243,7 +275,7 @@ def main(argv=None):
         return 1
 
     if args.out:
-        with open(args.out, 'w', encoding='utf-8') as f:
+        with open(args.out, 'w', encoding='utf-8', newline='\n') as f:
             f.write(f"# imp v1 | total {len(impurities)} | z {args.z}\n")
             for r in impurities:
                 f.write(_impurity_block(r) + '\n')

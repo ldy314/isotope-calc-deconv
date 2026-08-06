@@ -92,6 +92,29 @@ def test_d_and_t_symbols():
     assert imp.iso_symbol('C', 13) == '¹³C'
     print("[OK] 核素符号 D/T/¹³C")
 
+def test_same_element_natural_merge():
+    """同元素多列 natural 合并：C natural 128 + ¹³C 3 + N natural 26 + ¹⁵N 2
+    → 全天然杂质应为 C₁₃₁（128+3）与 N₂₈（26+2）合并成一列"""
+    cols = [
+        imp.ElementColumn('C', 'natural', 128),
+        imp.ElementColumn('C', '13', 3),
+        imp.ElementColumn('H', 'natural', 198),
+        imp.ElementColumn('N', 'natural', 26),
+        imp.ElementColumn('N', '15', 2),
+        imp.ElementColumn('O', 'natural', 35),
+        imp.ElementColumn('S', 'natural', 2),
+    ]
+    out = imp.enumerate_impurities(cols, z=0)
+    names = [r['name'] for r in out]
+    # 全天然：C₁₃₁H₁₉₈N₂₈O₃₅S₂（C=128+3 合并，N=26+2 合并）
+    assert names[0] == 'C₁₃₁H₁₉₈N₂₈O₃₅S₂', f"全天然应为合并形式，实际: {names[0]}"
+    r0 = out[0]
+    # natural 列合并为单列：元素列表应恰好 C,H,N,O,S 各一次
+    assert r0['elements'] == ['C', 'H', 'N', 'O', 'S'], f"元素: {r0['elements']}"
+    assert r0['counts'] == [131, 198, 28, 35, 2], f"个数: {r0['counts']}"
+    assert len(names) == 6, f"应 6 个杂质，实际 {len(names)}"
+    print(f"[OK] 同元素合并 → 首个杂质 {names[0]}，共 {len(names)} 个")
+
 if __name__ == '__main__':
     test_c2d3()
     test_c2d3_z0()
@@ -101,4 +124,5 @@ if __name__ == '__main__':
     test_multi_mod()
     test_zero_count_mod_ignored()
     test_d_and_t_symbols()
+    test_same_element_natural_merge()
     print("\n全部测试通过 ✔")
