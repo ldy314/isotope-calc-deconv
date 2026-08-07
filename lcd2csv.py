@@ -41,11 +41,15 @@ def export_scan(path: str, scan_idx: int) -> Tuple[np.ndarray, np.ndarray]:
     return np.asarray(sp.mz, dtype=float), np.asarray(sp.intensity, dtype=float)
 
 
-def export_rt_average(path: str, rt_min: float, rt_max: float, ms_level: int = 1
-                      ) -> Tuple[np.ndarray, np.ndarray]:
-    """平均 RT 窗口内 MS1 谱：m/z 按 0.1 mDa 分箱求和，返回 (mz, intensity)"""
+def _rt_average_bins(path: str, rt_min: float, rt_max: float, ms_level: int = 1,
+                     bin_da: float = 0.002) -> Tuple[dict, int]:
+    """平均 RT 窗口内 MS 谱 → {m/z分箱: 强度}。
+
+    bin_da：m/z 分箱宽度（默认 2 mDa，可合并扫描间 ~1 mDa 的质量漂移重复峰）。
+    返回 (bins, 使用的谱数)。
+    """
     reader = openszraw.RawReader(path)
-    bins: dict = {}  # m/z → intensity
+    bins: dict = {}
     n_used = 0
     for i in range(reader.scan_count):
         sp = reader.read_spectrum(i)
@@ -56,13 +60,39 @@ def export_rt_average(path: str, rt_min: float, rt_max: float, ms_level: int = 1
             continue
         n_used += 1
         for m, it in zip(sp.mz, sp.intensity):
-            key = round(float(m), 4)  # 0.1 mDa 分箱
+            key = round(float(m) / bin_da) * bin_da
             bins[key] = bins.get(key, 0.0) + float(it)
     if n_used == 0:
         raise ValueError(f"RT 窗口 [{rt_min}, {rt_max}] 内无 MS{ms_level} 谱")
+    return bins, n_used
+
+
+def export_rt_average(path: str, rt_min: float, rt_max: float, ms_level: int = 1
+                      ) -> Tuple[np.ndarray, np.ndarray]:
+    """平均 RT 窗口内 MS1 谱：m/z 按 2 mDa 分箱求和，返回 (mz, intensity)"""
+    bins, _ = _rt_average_bins(path, rt_min, rt_max, ms_level)
     mz = np.array(sorted(bins.keys()), dtype=float)
     intensity = np.array([bins[m] for m in mz], dtype=float)
     return mz, intensity
+
+
+def export_rt_subtract(path: str, rt_min: float, rt_max: float,
+                       bg_min: float, bg_max: float, ms_level: int = 1,
+                       bin_da: float = 0.002) -> Tuple[np.ndarray, np.ndarray, int, int]:
+    """峰窗口平均谱 − 背景窗口平均谱（m/z 分箱对齐，负值截零）。
+
+    返回 (mz, intensity, 峰窗口谱数, 背景窗口谱数)。
+    """
+    sample, n_s = _rt_average_bins(path, rt_min, rt_max, ms_level, bin_da)
+    bg, n_b = _rt_average_bins(path, bg_min, bg_max, ms_level, bin_da)
+    out = {}
+    for m, s in sample.items():
+        v = s - bg.get(m, 0.0)
+        if v > 0:
+            out[m] = v
+    mz = np.array(sorted(out.keys()), dtype=float)
+    intensity = np.array([out[m] for m in mz], dtype=float)
+    return mz, intensity, n_s, n_b
 
 
 def export_max_tic(path: str, ms_level: int = 1) -> Tuple[np.ndarray, np.ndarray, int]:
@@ -99,6 +129,11 @@ def parse_args(argv=None):
                    help='导出第 N 张谱（0-based）')
     p.add_argument('--rt', nargs=2, type=float, default=None, metavar=('MIN', 'MAX'),
                    help='平均 RT 窗口 [MIN, MAX] 秒内的 MS1 谱')
+    p.add_argument('--bg', nargs=2, type=float, default=None, metavar=('MIN', 'MAX'),
+                   help='背景扣除：RT [MIN, MAX] 秒窗口平均谱，从 --rt 峰窗口谱中扣除'
+                        '（需与 --rt 同用；分钟×60 转秒）')
+    p.add_argument('--bin-da', type=float, default=0.002,
+                   help='RT 平均/背景扣除的 m/z 分箱宽度 Da（默认 0.002，合并扫描间质量漂移）')
     p.add_argument('--ms-level', type=int, default=1, help='MS 级（默认 1，仅 --rt/默认模式用）')
     p.add_argument('--out', metavar='CSV', default=None, help='输出 CSV 路径（默认打印到 stdout）')
     return p.parse_args(argv)
@@ -118,8 +153,15 @@ def main(argv=None):
             mz, intensity = export_scan(args.lcd, args.scan)
             desc = f"scan #{args.scan}"
         elif args.rt is not None:
-            mz, intensity = export_rt_average(args.lcd, args.rt[0], args.rt[1], args.ms_level)
-            desc = f"RT [{args.rt[0]}-{args.rt[1]}]s 平均 MS{args.ms_level}"
+            if args.bg is not None:
+                mz, intensity, n_s, n_b = export_rt_subtract(
+                    args.lcd, args.rt[0], args.rt[1], args.bg[0], args.bg[1],
+                    args.ms_level, args.bin_da)
+                desc = (f"RT [{args.rt[0]}-{args.rt[1]}]s 平均 MS{args.ms_level}"
+                        f"（{n_s} 谱）− 背景 RT [{args.bg[0]}-{args.bg[1]}]s（{n_b} 谱）")
+            else:
+                mz, intensity = export_rt_average(args.lcd, args.rt[0], args.rt[1], args.ms_level)
+                desc = f"RT [{args.rt[0]}-{args.rt[1]}]s 平均 MS{args.ms_level}"
         else:
             mz, intensity, idx = export_max_tic(args.lcd, args.ms_level)
             desc = f"TIC 最强 scan #{idx} (MS{args.ms_level})"
