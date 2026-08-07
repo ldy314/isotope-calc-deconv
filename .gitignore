@@ -20,3 +20,6 @@ ExactMass_Calculator_v2.xlsx
 # 编辑器
 .vscode/
 .idea/
+
+# 计算输出 CSV（每次运行生成，不入库）
+impurity_peaks_*.csv
