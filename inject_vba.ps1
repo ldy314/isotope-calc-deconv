@@ -30,7 +30,7 @@ try {
     # 按钮：left, top, width, height (points)。放 E40 附近
     $btn = $ws.Buttons().Add(650, 48, 150, 40)
     $btn.OnAction = "RunTheo"
-    $btn.Caption = "计算前20峰"
+    $btn.Caption = "计算前50峰"
     $btn.Font.Size = 12
     $btn.Font.Bold = $true
     Set-Content -Path $log -Value "BUTTON ADDED" -Encoding UTF8

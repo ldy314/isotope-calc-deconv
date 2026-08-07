@@ -158,7 +158,7 @@ def compute_theoretical_spectrum(
     columns: List[ElementColumn],
     z: int = 1,
     tol: float = 0.001,
-    top_n: int = 20,
+    top_n: int = 50,
     min_ab: float = 0.05,
 ) -> List[IsotopePeak]:
     """计算前 top_n 个同位素峰，按质量升序返回。
@@ -206,7 +206,7 @@ def compute_theoretical_spectrum(
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="theo",
-        description="理论同位素分布计算：元素表 → 前20同位素峰（中性质量/m/z/相对丰度）",
+        description="理论同位素分布计算：元素表 → 前50同位素峰（中性质量/m/z/相对丰度）",
     )
     parser.add_argument(
         "--elements", nargs="+", required=True, metavar="E",
@@ -216,7 +216,7 @@ def parse_args(argv=None):
     parser.add_argument("--z", type=int, default=1, help="电荷数（默认 1）")
     parser.add_argument("--tol", type=float, default=0.001, help="质量精度（峰合并容差 Da，默认 0.001）")
     parser.add_argument("--min-ab", type=float, default=0.05, help="相对丰度阈值（%%，最强峰=100，低于此值不显示，默认 0.05）")
-    parser.add_argument("--top", type=int, default=20, help="输出峰数（默认 20）")
+    parser.add_argument("--top", type=int, default=50, help="输出峰数（默认 50）")
     parser.add_argument("--json", action="store_true", help="JSON 输出（供 Excel 回填）")
     parser.add_argument("--out", metavar="FILE", default=None,
                         help="结果文件路径：成功时写 JSON，失败时写同目录 theo_err.txt"

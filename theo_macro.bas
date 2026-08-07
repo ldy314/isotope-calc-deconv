@@ -8,7 +8,7 @@ Option Explicit
 #End If
 
 ' ============================================================
-' RunTheo - 调用 Python theo.py 计算前20同位素峰并回填
+' RunTheo - 调用 Python theo.py 计算前50同位素峰并回填
 ' 架构：VBA 内置 Shell() 直接启动 Python（无重定向！），
 '       theo.py 用 --out 参数自行写结果文件（成功→JSON，失败→theo_err.txt）。
 ' 关键设计：
@@ -152,7 +152,7 @@ Sub RunTheo()
         End If
     Next i
 
-    For i = r To 33
+    For i = r To 63
         ws.Cells(i, 1).Value = ""
         ws.Cells(i, 2).Value = ""
         ws.Cells(i, 3).Value = ""

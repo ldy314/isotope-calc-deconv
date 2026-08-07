@@ -5,7 +5,7 @@ calc_imp - 同位素取代杂质计算（枚举 + 逐杂质理论同位素峰 �
 组合 imp.py（枚举杂质）与 theo.py（ExactMass_Calculator_v2 的计算引擎）：
   1. 解析元素表（与 ExactMass_Impurities 输入格式一致）
   2. 枚举所有同位素取代杂质（含全天然，不含输入本身）
-  3. 对每个杂质，用 theo.compute_theoretical_spectrum 计算其同位素分布（前 20 峰）
+  3. 对每个杂质，用 theo.compute_theoretical_spectrum 计算其同位素分布（前 50 峰）
   4. 输出 CSV：每行 = 一个杂质的一个峰
 
 CSV 列：

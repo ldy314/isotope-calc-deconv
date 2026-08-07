@@ -9,9 +9,10 @@
     B7  分子式显示（自动）
     B9  电荷数 z
     B10 质量精度（默认 0.001）
+    B11 丰度阈值（默认 0.05%）
     A13 输出表头（峰# | 中性精确质量 | m/z | 相对丰度%）
-    A14:A33 输出 20 行
-    C40 "计算前20峰" 按钮（VBA 宏 RunTheo）
+    A14:A63 输出 50 行
+    C40 "计算前50峰" 按钮（VBA 宏 RunTheo）
   IsotopeData sheet（长表）:
     A1:D49 元素/质量数/精确质量/天然丰度
 """
@@ -119,7 +120,7 @@ ws = wb.create_sheet('Calculator')
 # 标题
 ws.merge_cells('A1:J1')
 c = ws['A1']
-c.value = '同位素精确质量 / m/z 计算器 v2 (前20同位素峰, Python引擎)'
+c.value = '同位素精确质量 / m/z 计算器 v3 (前50同位素峰, Python引擎)'
 c.font = FONT_TITLE
 c.alignment = Alignment(horizontal='left', vertical='center')
 
@@ -279,7 +280,7 @@ ws['B11'].fill = FILL_INPUT
 ws['B11'].number_format = '0.00"%"'
 
 # --- 输出表 ---
-ws['A12'] = '输出：丰度前20同位素峰（按质量升序）'
+ws['A12'] = '输出：丰度前50同位素峰（按质量升序）'
 ws['A12'].font = FONT_LABEL
 
 out_headers = ['#', '中性精确质量 (u)', 'm/z', '相对丰度 (%)']
@@ -290,7 +291,7 @@ for c, h in enumerate(out_headers, 1):
     cell.alignment = CENTER
     cell.border = BORDER
 
-for r in range(14, 34):  # 20 行
+for r in range(14, 64):  # 50 行
     for c in range(1, 5):
         cell = ws.cell(row=r, column=c)
         cell.font = FONT_BODY
@@ -307,25 +308,25 @@ ws.column_dimensions['C'].width = 18
 ws.column_dimensions['D'].width = 14
 
 # --- 按钮（VBA 宏位置说明） ---
-ws['A36'] = '使用说明：'
-ws['A36'].font = FONT_LABEL
+ws['A66'] = '使用说明：'
+ws['A66'].font = FONT_LABEL
 notes = [
     '1. 第3行选元素，第4行选同位素种类（natural=自然分布，或输入质量数如 13），第5行输入原子个数',
     '2. 选 natural 时原子个数=该元素总原子数（按天然丰度算分布包络）；选纯同位素（如 13）时=该同位素原子数（固定质量）',
     '3. 同元素可占多列（如 natural C×128 + ¹³C×6）表示部分标记多肽',
     '4. 第9行电荷数 z（可正可负，0=中性分子不显示电荷），第10行质量精度=峰合并容差（默认0.001 Da）',
     '5. 第11行丰度阈值=相对丰度低于此值的峰不显示（默认0.05%，最强峰=100%）',
-    '6. 点击"计算前20峰"按钮，调用 Python (theo.py) 计算并回填输出表',
+    '6. 点击"计算前50峰"按钮，调用 Python (theo.py) 计算并回填输出表',
     '7. 需要本机安装 Python 3.11+ 与 molmass 库：pip install molmass',
 ]
 for i, note in enumerate(notes):
-    cell = ws[f'A{37 + i}']
+    cell = ws[f'A{67 + i}']
     cell.value = note
     cell.font = Font(name='微软雅黑', size=10, color='595959')
 
 # 按钮说明（实际按钮由 inject_vba.ps1 通过 COM 创建，位置在 E40 附近）
-ws['A44'] = '▶ 按钮"计算前20峰"由构建脚本自动放置（E40 区域）'
-ws['A44'].font = Font(name='微软雅黑', size=10, bold=True, color='C00000')
+ws['A74'] = '▶ 按钮"计算前50峰"由构建脚本自动放置（E40 区域）'
+ws['A74'].font = Font(name='微软雅黑', size=10, bold=True, color='C00000')
 
 wb.save(OUT)
 print(f'已保存: {OUT}（此为 .xlsx 中间格式，随后由 inject_vba.ps1 注入宏并另存为 .xlsm）')
