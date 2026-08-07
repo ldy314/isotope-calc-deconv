@@ -23,3 +23,6 @@ ExactMass_Calculator_v2.xlsx
 
 # 计算输出 CSV（每次运行生成，不入库）
 impurity_peaks_*.csv
+
+# 岛津原始数据与导出谱（本地测试数据，不入库）
+参考数据/
