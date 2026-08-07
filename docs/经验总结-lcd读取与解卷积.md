@@ -1,0 +1,76 @@
+# 经验总结：岛津 .lcd 读取与解卷积准备（2026-08-07）
+
+本轮用 `参考数据/岛津原始数据 测试打开/` 下两个 .lcd（`STD 0.005_001.lcd`、`sp_003.lcd`）
+实测了「.lcd → 谱图 CSV → 解卷积」全链路的前半段。以下经验供下一轮（新版 .lcd 数据）直接复用。
+
+## 1. .lcd 读取：OpenSZRaw（已装，PyPI 0.1.3）
+
+- 库：`openszraw`，clean-room 逆向，无需岛津 SDK，支持 LCMS-9030（.lcd QTOF）。
+- API：
+  ```python
+  import openszraw
+  r = openszraw.RawReader(path)
+  r.scan_count                 # 600（本批数据）
+  sp = r.read_spectrum(i)      # Spectrum{mz, intensity, ms_level, retention_time_sec}
+  ```
+- 已封装为 `lcd2csv.py`：`--scan N`（单张谱）/ `--rt MIN MAX`（窗口平均）/ `--bg MIN MAX`（背景扣除，需与 --rt 同用）。
+- **时间单位 = 秒**（用户习惯分钟：4.02 min = 241.2 s）。
+
+## 2. 关键经验（踩过的坑）
+
+### 2.1 化合物峰 ≠ 文件开头最强谱
+- 文件开头（RT 210–212s）是**进样尖峰/背景**：sp_003 在 scan #11–12 有 22.8 亿 TIC 饱和（m/z 0.43 垃圾峰，单峰 19.5 亿）。
+- **化合物峰在 RT 240–244s（=4.00–4.07 min）**，STD 峰顶 scan #327（242.7s），SP 峰顶 scan #307（240.7s）。
+- 教训：**先扫整条 TIC 定位色谱峰**（按 1–2s 分箱看轮廓），不要直接取全文件 TIC 最强扫描。
+
+### 2.2 RT 窗口平均的分箱宽度
+- 0.1 mDa 分箱会残留**扫描间质量漂移（~1 mDa）导致的重复近同峰**（如 885.0501/885.0511 并列）。
+- 用 **2 mDa 分箱**（`--bin-da 0.002`，默认）可合并漂移；单张峰顶谱（--scan）无此问题、最干净。
+
+### 2.3 背景扣除
+- `--rt 240 243 --bg 210 228`（峰窗口 − 背景窗口，m/z 对齐相减，负值截零）。
+- 饱和尖峰只污染 m/z 0.43 垃圾峰（在化合物区域之外），不影响 m/z > 1200 的拟合区。
+- 扣背景后化合物包络成为最强峰（STD 1442.29 强度 44 万；SP 1444.33 19 万），+2.04 Da 标记偏移清晰可见。
+
+### 2.4 谱图→化合物对应：先验算理论 m/z，再跑 deconv
+- 实测主簇 STD 1442.29 / SP 1444.33（簇内间隔 ~0.51 Da 交错 → 疑似 z=2；+2.04 偏移 = 标记）。
+- 但用 SPH20291（C₁₃₄H₁₉₈N₂₈O₃₅S₂）跑 deconv：z=1→2824.41、z=2→1412.71、z=4→706.86 的拟合窗口内 **0 个数据点**（deconv 报"拟合窗口内点数不足"）。
+- 结论：**这批 .lcd 测的不是 SPH20291**（docx 只是参考样例）。教训：跑 deconv 前先用 theo 验算目标化合物在各电荷下的理论 m/z，确认与实测簇对应；deconv 的"窗口内 0 点"报错就是最快捷的对应性检查。
+
+## 3. docx 里 ChemDraw OLE 的分子式提取（已验证可行）
+
+`SPH20291-Isotop1所有可能 (1).docx` = 21 个嵌入 ChemDraw OLE 对象（CFB 复合文档）：
+
+```python
+import olefile, zipfile, io, re
+z = zipfile.ZipFile(docx)
+ole = olefile.OleFileIO(io.BytesIO(z.read('word/embeddings/oleObjectN.bin')))
+cdx = ole.openstream('CONTENTS').read()
+re.findall(rb'Chemical Formula: ([A-Za-z0-9]+)', cdx)   # 分子式
+re.findall(rb'Exact Mass: ([\d.]+)', cdx)                # 精确质量
+```
+
+- 无需完整解析 CDX 对象：分子式/精确质量**以文本形式直接嵌在 CDX 里**。
+- 结果：SPH20291 = C₁₃₄H₁₉₈N₂₈O₃₅S₂（2823.40）；21 种可能 = ¹³C 0–6 × ¹⁵N 0–2 全组合。
+- **imp.py 以全标记物种为输入枚举的 20 个杂质与 docx 21 种减输入本身完全一致** → 固化测试 `test_imp_docx.py`。
+
+## 4. deconv 引擎现状（模拟谱验证通过，真实谱待验）
+
+- `deconv.py`：NNLS 模式拟合（imp 枚举 → theo 理论模式 → Gaussian 峰形卷积 FWHM=m/30000 → NNLS + 基线 → 质量偏移扫描 ±10ppm → 质量简并类自动合并）。
+- `test_deconv.py` 6 项全过：profile/centroid 还原、+5ppm 偏移找回、1% 噪声稳健、natural 下限、z=2。
+- 30k / 1–5 kDa 下 D/¹³C/¹⁵N 近简并对（Δm≈0.003 Da << 0.1–0.2 FWHM）不可分辨 → 自动按名义质量类合并（`--proximity-factor` 可调，`--no-merge` 关闭）。
+
+## 5. 下一轮（新版 .lcd 数据）直接套用的流程
+
+```
+lcd2csv.py --lcd X.lcd --list                    # 1) 看扫描结构
+lcd2csv.py --lcd X.lcd --rt 240 243 --bg 210 228 --out 峰.csv   # 2) 峰窗口−背景窗口
+# 3) 先用 theo 验算目标化合物理论 m/z（各电荷），确认对应
+# 4) deconv.py --elements ... --z N --spectrum 峰.csv --out 结果.json
+```
+
+## 6. 环境备注
+
+- venv 已装：numpy 2.5.1、scipy、openszraw 0.1.3、olefile。
+- 导出 CSV 在 `参考数据/导出CSV/`（该目录已 gitignore，不入库）。
+- 安全删除机制对中文路径会拦截 Git Bash 的 rm → 用 PowerShell `Remove-Item -LiteralPath`。
