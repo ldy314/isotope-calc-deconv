@@ -76,6 +76,52 @@ def export_rt_average(path: str, rt_min: float, rt_max: float, ms_level: int = 1
     return mz, intensity
 
 
+# ---------------------------------------------------------------------------
+# 源数据形态识别：profile（轮廓谱，连续采样）vs centroid（中心化峰列表）
+# ---------------------------------------------------------------------------
+# 判据（与 deconv.detect_mode 一致）：
+#   1) 采样密度 > 50 点/Da → profile
+#   2) 中位相邻步长 < 0.01 Da → profile（对强度过滤后点数缩水的谱仍稳健）
+#   否则 → centroid
+# 实证：LCMS-9030 centroid 每扫描 10-100 点、中位间隙 0.2-2.2 Da；
+#        profile 每峰 10-20 点、步长 ~0.003-0.005 Da。
+
+def detect_mode(mz: np.ndarray) -> str:
+    if len(mz) < 3:
+        return 'centroid'
+    span = float(mz[-1] - mz[0])
+    if span > 0 and len(mz) / span > 50.0:
+        return 'profile'
+    steps = np.diff(np.sort(mz))
+    steps = steps[steps > 0]
+    if len(steps):
+        if float(np.median(steps)) < 0.01:
+            return 'profile'
+    return 'centroid'
+
+
+def source_mode(path: str, rt_min: float = None, rt_max: float = None,
+                ms_level: int = 1) -> str:
+    """识别 .lcd 源数据的形态（profile/centroid）。
+
+    给 RT 窗口则取窗口内 TIC 最强的一张 MS1 原始谱判断；否则用扫描 0。
+    """
+    reader = openszraw.RawReader(path)
+    best_idx, best_tic = 0, -1.0
+    for i in range(reader.scan_count):
+        sp = reader.read_spectrum(i)
+        if int(sp.ms_level) != ms_level:
+            continue
+        rt = float(sp.retention_time_sec)
+        if rt_min is not None and (rt < rt_min or rt > rt_max):
+            continue
+        tic = float(np.sum(sp.intensity))
+        if tic > best_tic:
+            best_tic, best_idx = tic, i
+    sp = reader.read_spectrum(best_idx)
+    return detect_mode(np.asarray(sp.mz, dtype=float))
+
+
 def export_rt_subtract(path: str, rt_min: float, rt_max: float,
                        bg_min: float, bg_max: float, ms_level: int = 1,
                        bin_da: float = 0.002) -> Tuple[np.ndarray, np.ndarray, int, int]:
@@ -152,6 +198,7 @@ def main(argv=None):
         if args.scan is not None:
             mz, intensity = export_scan(args.lcd, args.scan)
             desc = f"scan #{args.scan}"
+            mode = detect_mode(mz)
         elif args.rt is not None:
             if args.bg is not None:
                 mz, intensity, n_s, n_b = export_rt_subtract(
@@ -162,15 +209,20 @@ def main(argv=None):
             else:
                 mz, intensity = export_rt_average(args.lcd, args.rt[0], args.rt[1], args.ms_level)
                 desc = f"RT [{args.rt[0]}-{args.rt[1]}]s 平均 MS{args.ms_level}"
+            mode = source_mode(args.lcd, args.rt[0], args.rt[1], args.ms_level)
         else:
             mz, intensity, idx = export_max_tic(args.lcd, args.ms_level)
             desc = f"TIC 最强 scan #{idx} (MS{args.ms_level})"
+            mode = detect_mode(mz)
+
+        tag = {'profile': '轮廓谱', 'centroid': '中心化'}.get(mode, mode)
 
         if args.out:
             write_csv(mz, intensity, args.out)
             print(f"已导出 {desc}：{len(mz)} 点 → {args.out}")
+            print(f"源数据形态：{tag}（{mode}）")
         else:
-            print(f"# {desc}（{len(mz)} 点）")
+            print(f"# {desc}（{len(mz)} 点，{tag}）")
             for m, i in zip(mz, intensity):
                 print(f'{m:.6f}\t{i:.8e}')
         return 0
