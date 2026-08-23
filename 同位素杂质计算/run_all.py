@@ -577,7 +577,7 @@ def _write_real_impurity_sheet(wb, res, z, sheet_name, title, body_k, build_peak
     ws["A1"].font = Font(bold=True, size=11)
     hdr = ["标记原子数", "类别", "名称（分子式）", "理论M0 m/z", "实测M0 m/z",
            "实测窗口积分", "本体包络贡献(预测)", "扣除后残余", "含量%",
-           "不带电荷分子量", "误差(ppm)"]
+           "不带电荷单同位素质量", "误差(ppm)"]
     for i, h in enumerate(hdr, 1):
         put(ws, 3, i, h)
     style_header(ws, 3, len(hdr))
