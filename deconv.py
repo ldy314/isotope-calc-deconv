@@ -239,11 +239,21 @@ def deconvolve(columns: List[imp.ElementColumn], spectrum_path: str,
     if mode == 'auto':
         mode = auto_mode
 
-    # 2) 枚举杂质 + 基模式（棒状）
+    # 2) 枚举杂质 + 主成分（输入分子本身），基模式（棒状）
     impurities = imp.enumerate_impurities(columns, z=z)
     if not impurities:
         raise ValueError("无修饰同位素，无杂质可解卷积")
-    sticks = [_species_stick(r, z, tol, top_n) for r in impurities]
+    # 主成分（输入分子）也作为基函数参与 NNLS 拟合：否则全标记峰簇
+    # （m/z 最高，如 SPH20291 6¹³C+2¹⁵N 的 [M+2H]²⁺≈1416.7）无法被任何
+    # 杂质模式解释，解卷积会把其强度错误分摊到邻近物种。
+    input_spec = {
+        'name': imp.formula_name([(c.element, c.isotope, c.count) for c in columns], z),
+        'elements': [c.element for c in columns],
+        'isos': [c.isotope for c in columns],
+        'counts': [c.count for c in columns],
+    }
+    all_specs = [input_spec] + impurities
+    sticks = [_species_stick(r, z, tol, top_n) for r in all_specs]
 
     # 3) 拟合窗口裁剪
     lo, hi = auto_window(sticks, resolution)
@@ -297,7 +307,7 @@ def deconvolve(columns: List[imp.ElementColumn], spectrum_path: str,
         for m in members:
             group_of[m] = g
     species = []
-    for j, r in enumerate(impurities):
+    for j, r in enumerate(all_specs):
         g = group_of[j]
         species.append({
             'rank': j + 1,
@@ -307,6 +317,7 @@ def deconvolve(columns: List[imp.ElementColumn], spectrum_path: str,
             'counts': r['counts'],
             'group': g,
             'merged': len(groups[g]) > 1,
+            'is_target': j == 0,
             'relative_content': float(group_rel[g]),
             'weight': float(group_w[g]),
         })
@@ -330,6 +341,7 @@ def deconvolve(columns: List[imp.ElementColumn], spectrum_path: str,
         'baseline_weight': baseline,
         'residual_rss': rss,
         'n_species': len(species),
+        'target_rank': 1,
         'n_groups': len(groups),
         'window': [lo, hi],
         'species': species,
@@ -351,6 +363,8 @@ def _format_table(result: dict) -> str:
             note = '与 ' + '、'.join(members) + ' 简并'
         else:
             note = ""
+        if s.get('is_target'):
+            note = ('[主成分]' + ('' if not note else '；' + note))
         lines.append(f"{s['rank']:>3}  {s['name']:<18} {s['relative_content']:>10.3f} {s['weight']:>10.5f}  {note}")
     return '\n'.join(lines)
 

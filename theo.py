@@ -25,6 +25,7 @@ from typing import List, Tuple
 import molmass
 
 ELECTRON_MASS = molmass.ELECTRON.mass  # 0.000548579909 u
+PROTON_MASS = 1.00782503223            # ¹H 原子质量（ESI 质子加合用）
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +164,10 @@ def compute_theoretical_spectrum(
 ) -> List[IsotopePeak]:
     """计算前 top_n 个同位素峰，按质量升序返回。
 
-    z=0 表示中性分子：m/z 列输出中性质量 M（不除电荷、不加电子质量修正）。
+    z=0 表示中性分子：m/z = M。z≠0 按 ESI 惯例建模加合离子：
+      z>0 → [M+zH]ᶻ⁺（质子加合），m/z = (M + z·(m_H−m_e)) / z
+      z<0 → [M−|z|H]ᶻ⁻（去质子），  m/z = (M + z·(m_H−m_e)) / z（z 为负）
+    与 LCMS-9030 等 ESI 仪器的实测 m/z 一致。
     min_ab: 相对丰度阈值（%，最强峰=100）。相对丰度低于该值的峰不显示（默认 0.05%）。
     """
     if not columns:
@@ -177,7 +181,9 @@ def compute_theoretical_spectrum(
         if z == 0:
             mz = mass  # 中性分子：m/z = M
         else:
-            mz = (mass - z * ELECTRON_MASS) / z
+            # ESI 加合离子：[M+zH]ᶻ⁺（z>0）或 [M−|z|H]ᶻ⁻（z<0）
+            # m/z = (M + z·(m_H − m_e)) / z
+            mz = (mass + z * (PROTON_MASS - ELECTRON_MASS)) / z
         peaks.append(IsotopePeak(
             mass=mass,
             abundance=prob,

@@ -24,10 +24,15 @@ import deconv
 
 def simulate_profile(columns, z, weights, resolution=deconv.RESOLUTION_DEFAULT,
                      noise=0.0, seed=0):
-    """按已知权重混合各杂质模式，生成 profile 谱 (grid, model)。"""
+    """按已知权重混合各物种模式（含主成分/输入分子本身），生成 profile 谱 (grid, model)。
+    权重顺序：第 0 个 = 主成分（输入分子），其后 = enumerate_impurities 的杂质。"""
     impurities = imp.enumerate_impurities(columns, z=z)
-    assert len(weights) == len(impurities), f"权重数 {len(weights)} != 杂质数 {len(impurities)}"
-    sticks = [deconv._species_stick(r, z, 0.001, 500) for r in impurities]
+    target_dict = {'elements': [c.element for c in columns],
+                   'isos': [c.isotope for c in columns],
+                   'counts': [c.count for c in columns]}
+    target_stick = deconv._species_stick(target_dict, z, 0.001, 500)
+    sticks = [target_stick] + [deconv._species_stick(r, z, 0.001, 500) for r in impurities]
+    assert len(weights) == len(sticks), f"权重数 {len(weights)} != 物种数 {len(sticks)}"
     lo, hi = deconv.auto_window(sticks, resolution)
     min_m = min(m for st in sticks for m, _ in st)
     sigma = min_m / resolution / deconv.GAUSS_K
@@ -74,7 +79,7 @@ TEST_COLS = [
 ]
 # 已知权重（总和=1）：全天然 0.5，单 D 0.15，双 D 0.10，三 D 0.05，
 # 单 ¹³C 0.10，双 ¹³C 0.05，D1+¹³C1 0.03，D2+¹³C1 0.02 → 其余 0
-TEST_WEIGHTS = [0.50, 0.15, 0.10, 0.05, 0.10, 0.05, 0.03, 0.02, 0.0, 0.0, 0.0]
+TEST_WEIGHTS = [0.0, 0.50, 0.15, 0.10, 0.05, 0.10, 0.05, 0.03, 0.02, 0.0, 0.0, 0.0]
 
 
 def expected_rel(weights):

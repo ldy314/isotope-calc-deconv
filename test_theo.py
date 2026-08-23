@@ -49,11 +49,11 @@ def test_partial_label_13c6():
     print(f"[OK] ¹³C6 标记 M = {peaks[0].mass:.6f} (期望 ~{expected:.4f})")
 
 def test_charge_z2():
-    """z=2 时 m/z = (M - 2*me)/2"""
+    """z=2 时 ESI [M+2H]²⁺：m/z = (M + 2*(m_H−m_e))/2"""
     cols = [theo.ElementColumn('C', 'natural', 8), theo.ElementColumn('H', 'natural', 10),
             theo.ElementColumn('N', 'natural', 4), theo.ElementColumn('O', 'natural', 2)]
     peaks = theo.compute_theoretical_spectrum(cols, z=2, tol=0.001)
-    expected_mz = (194.080376 - 2 * theo.ELECTRON_MASS) / 2
+    expected_mz = (194.080376 + 2 * (theo.PROTON_MASS - theo.ELECTRON_MASS)) / 2
     assert approx(peaks[0].mz, expected_mz, 1e-4), f"m/z={peaks[0].mz} 期望 {expected_mz}"
     print(f"[OK] z=2 m/z = {peaks[0].mz:.6f} (期望 ~{expected_mz:.6f})")
 
@@ -84,11 +84,11 @@ def test_less_than_20_peaks():
     print(f"[OK] 纯同位素 ¹²C₁₀¹H₂₀¹⁶O₅ → 单峰 {peaks[0].mass:.4f}")
 
 def test_negative_charge():
-    """负电荷 z=-1：m/z = (M - z·me)/z = -(M + me)（质谱惯例负值）"""
+    """负电荷 z=-1：ESI [M−H]⁻，m/z = (M - (m_H−m_e)) 的负值"""
     cols = [theo.ElementColumn('C', 'natural', 8), theo.ElementColumn('H', 'natural', 10),
             theo.ElementColumn('N', 'natural', 4), theo.ElementColumn('O', 'natural', 2)]
     peaks = theo.compute_theoretical_spectrum(cols, z=-1, tol=0.001)
-    expected = -(194.080376 + theo.ELECTRON_MASS)
+    expected = (194.080376 + (-1) * (theo.PROTON_MASS - theo.ELECTRON_MASS)) / (-1)
     assert approx(peaks[0].mz, expected, 1e-4), f"m/z={peaks[0].mz} 期望 {expected}"
     print(f"[OK] z=-1 m/z = {peaks[0].mz:.6f} (期望 ~{expected:.6f})")
 
