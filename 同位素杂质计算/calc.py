@@ -208,13 +208,27 @@ def distribute_to_impurities(content_pct, z):
     return rows
 
 
-def analyze_sample(path, z, sample_name=None, half=MEAS_HALF):
-    sample_name = sample_name or path
-    body_m0 = M.MODEL[z][0]["m0_mz"]
-    d = io.read_mzml(path, target_mz=body_m0, half_width_mz=0.5, frac=0.1)
-    mz, inten = d["mz"], d["intensity"]
+def _read_profile(path, target_mz, half_width_mz=0.5, frac=0.1):
+    """按扩展名分派谱图读取：.lcd → lcd_io（OpenSZRaw，质心谱）；其余 → mzml_io。"""
+    if str(path).lower().endswith(".lcd"):
+        import lcd_io
+        return lcd_io.read_lcd(path, target_mz=target_mz,
+                               half_width_mz=half_width_mz, frac=frac)
+    return io.read_mzml(path, target_mz=target_mz,
+                        half_width_mz=half_width_mz, frac=frac)
+
+
+def analyze_profile(mz, inten, z, sample_name=None, half=MEAS_HALF,
+                    rt_lo=None, rt_hi=None, n_scans=None):
+    """从现成的轮廓谱 (mz, intensity) 做 9 档含量分析（不读文件）。
+
+    与 analyze_sample 共用同一内核；供 .lcd（经 TOF 换算）、外部 CSV 等通道复用。
+    """
+    sample_name = sample_name or "profile"
+    mz = np.asarray(mz, dtype=np.float64)
+    inten = np.asarray(inten, dtype=np.float64)
     if len(mz) == 0:
-        raise RuntimeError(f"{sample_name}: 未能从 mzML 读取到谱图")
+        raise RuntimeError(f"{sample_name}: 谱图为空")
 
     centers = calibrate(mz, inten, z)
     meas = extract_measured(mz, inten, z, centers)
@@ -244,10 +258,21 @@ def analyze_sample(path, z, sample_name=None, half=MEAS_HALF):
 
     return {
         "sample": sample_name, "z": z, "meas_half_da": half,
-        "rt_lo": d["rt_lo"], "rt_hi": d["rt_hi"], "n_scans": d["n_scans"],
+        "rt_lo": rt_lo, "rt_hi": rt_hi, "n_scans": n_scans,
         "centers": centers, "cal_off": cal_off,
         "measured": meas, "baselines": meas["baseline"], "results": results,
     }
+
+
+def analyze_sample(path, z, sample_name=None, half=MEAS_HALF):
+    """读取谱图文件（.mzML / .lcd）后做 9 档含量分析。"""
+    sample_name = sample_name or path
+    body_m0 = M.MODEL[z][0]["m0_mz"]
+    d = _read_profile(path, body_m0)
+    if len(d["mz"]) == 0:
+        raise RuntimeError(f"{sample_name}: 未能从谱图文件读取到谱图")
+    return analyze_profile(d["mz"], d["intensity"], z, sample_name, half,
+                           d["rt_lo"], d["rt_hi"], d["n_scans"])
 
 
 if __name__ == "__main__":
