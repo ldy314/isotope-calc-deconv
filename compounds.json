@@ -1,0 +1,12 @@
+{
+  "SPH20291": {
+    "formula": "C134H198N28O35S2",
+    "z": 2,
+    "note": "13残基环肽，天然同位素版。Ac-Pen-Asn-Thr-7MeTrp-Lys(Ac)-Pen-Tyr(OCH2CH2NH2)-2Nal-Api-Glu-Asn-3Pal-Sar-NH2；Pen1-Pen6 二硫桥；单同位素质量 2823.4016"
+  },
+  "SPH20291-Isotope1": {
+    "formula": "C128[13C]6H198N26[15N]2O35S2",
+    "z": 2,
+    "note": "SPH20291 的稳定同位素内标版，第5位 Lys(Ac) 为 U-13C6,15N2-Lys (SILAC Lys8)；单同位素质量 2831.4158，较天然版 +8.0142"
+  }
+}
