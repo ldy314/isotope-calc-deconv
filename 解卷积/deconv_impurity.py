@@ -1,12 +1,22 @@
 # -*- coding: utf-8 -*-
 """
 deconv_impurity.py - 基于解卷积的同位素杂质含量计算
+
+⛔ 已废弃（superseded，2026-09-24 标注，未删除，仅作历史档案）⛔
+    本脚本走的是 "lcd2csv → NNLS 解卷积" 路线，有两个硬伤：
+      1) lcd2csv 的 .lcd 质量轴换算是错的（见 lcd2csv.py 头部告警）；
+      2) NNLS 逐杂质拟合在 134 碳分子上病态不可信（合成谱还原和 >200%）。
+    → 正式实现请用：同位素杂质计算/（9 档固定系数 + 逐级三角扣除）
+      入口：同位素杂质计算/run_lcd_impurity.py（.lcd 批次）/ run_all.py
+      方法文档：同位素杂质计算方法与原理.md（v1.2）
+    保留本文件只为追溯早期方案。
+
 输入：岛津 .lcd / .csv 文件 + 标记化合物元素表
 输出：xlsx 报表（与 run_all.py 相同格式，1 位小数）
 
 复用已有脚本：
-  lcd2csv.py : .lcd → 谱图 CSV
-  deconv.py  : NNLS 解卷积（模式拟合）
+  lcd2csv.py : .lcd → 谱图 CSV（⚠️ 质量轴换算有误）
+  deconv.py  : NNLS 解卷积（模式拟合）（⚠️ 大分子病态）
   imp.py     : 杂质枚举
   theo.py    : 理论同位素包络
 

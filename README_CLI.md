@@ -1,5 +1,8 @@
 # chem.py — 同位素计算 / 杂质枚举 / 解卷积 命令行
 
+> **第一次接手这个仓库？先读 `AGENTS.md`（操作手册 + 高危坑清单）和 `MEMORY.md`（常数与决策台账）。**
+> 本文只讲 `chem.py` 这条 CLI，不覆盖下面第七条里的两个 Excel 产出线。
+
 **不再需要打开 Excel。** 所有功能一行命令完成，分子式直接写字符串或用化合物别名。
 
 Excel 那两个 xlsm 仍然可用（`ExactMass_Impurities.xlsm` 杂质枚举、`ExactMass_Impurities_Deconv.xlsm` 解卷积），底层调的是同一批引擎，结果完全一致。
@@ -79,7 +82,7 @@ chem rm MyPep                                        # 删除
 
 ---
 
-## 3. 四个核心命令
+## 3. 五个核心命令
 
 ### 3.1 `theo` — 理论同位素谱
 
@@ -138,6 +141,11 @@ chem lcd --lcd data.lcd --rt 300 360 --out spec.csv  # RT 窗口平均，单位�
 chem lcd --lcd data.lcd --rt 300 360 --bg 400 460 --out spec.csv   # 扣背景
 ```
 
+> ⚠️ **本子命令用 `openszraw` 读 `.lcd`，其 m/z 换算对本项目的 QTOF 变体是错的**
+> （真实关系是 `m/z = a·x² + c`，不是 `x/1e12`；会把 942.15 显示成 1442）。
+> 只适合"看看大致结构"，**不要用它做定量或化合物归属**。
+> 需要正确的 `.lcd` 读法 → 用 `同位素杂质计算/lcd_io.py` 或 `同位素取代率计算/embedded_engine.py`（见 `AGENTS.md` 坑 #1）。
+
 ### 3.5 `jdx` — 岛津 .jdx（JCAMP-DX 质心谱）导出 CSV
 
 与 `lcd` 平行：把 LabSolutions 导出的 `.jdx` 质心谱转成 `(m/z,intensity)` CSV，供 `deconv` 直接吃。参数（含 `--help`）完全透传给 `jdx2csv.py`。
@@ -180,10 +188,13 @@ chem deconv SPH20291-Isotope1 --spectrum spec.csv
 | `imp.py` | 杂质枚举引擎 |
 | `deconv.py` | 解卷积核心（NNLS + 高斯卷积） |
 | `deconv_excel.py` | 解卷积外壳（质心法 + 病态诊断），CLI 与 Excel 共用 |
-| `lcd2csv.py` | 岛津 .lcd 读取导出 |
+| `lcd2csv.py` | 岛津 .lcd 读取导出（⚠️ 质量轴换算有误，见 3.4） |
 | `jdx2csv.py` | 岛津 .jdx（JCAMP-DX 质心谱）读取导出 |
 | `analyze_remaining.py` | 批量解卷积「再处理2」其余 3 文件夹，产出 summary/report |
 | `chemdraw/parse_cdxml.py` 等 | ChemDraw .cdxml 结构解析（另一套工具） |
+| `AGENTS.md` / `MEMORY.md` / `CONTEXT.md` | **AI 交接手册 / 事实决策台账 / 领域术语表** |
+| `同位素取代率计算/` | 【产出线 B】取代率（富集度）引擎 + xlsm，见第 7 节 |
+| `同位素杂质计算/` | 【产出线 C】同位素杂质含量引擎 + xlsm，见第 7 节 |
 
 Excel 版仍在：`ExactMass_Impurities.xlsm`（杂质枚举）、`ExactMass_Impurities_Deconv.xlsm`（解卷积）。
 
@@ -193,5 +204,40 @@ Excel 版仍在：`ExactMass_Impurities.xlsm`（杂质枚举）、`ExactMass_Imp
 
 - **Windows 路径**：Git Bash 里给 `.exe` 传 `/d/...` 会被转成 `c:\d\...`，请先 `cd` 到目录再用相对路径，或用 `D:/...` 正斜杠形式。
 - **`imp` 对纯天然分子无意义** —— 会提示改用 `theo`。
-- **NNLS 对大分子不可信** —— 见 3.3，认准输出里的【不可靠】标记。
-- 输出 CSV 均为 `utf-8-sig`（带 BOM），Excel 直接双击打开不乱码。
+- **NNLS 对大分子不可信** —— 见 3.3，认准输出里的【不可靠】标记。134 碳分子上解非唯一（合成谱还原和 >200%），逐杂质含量请走第 7 节的 9 档三角扣除法。
+- **`.lcd` 只有走 3.4 那条路才需要小心** —— `chem lcd` 的 m/z 换算对本项目 QTOF 变体是错的，别拿它做定量。
+- 输出 CSV 均为 `utf-8-sig`（带 BOM），Excel 直接双击不乱码。
+
+---
+
+## 7. 不经过 chem.py 的两条产出线（**当前主战场，优先看这里**）
+
+`chem.py` 只覆盖"理论谱 / 杂质枚举 / 通用解卷积 / 格式转换"。真正交付报告的另外两条线在子目录里，**都有原生参数化生成器与 xlsm，不要另起炉灶**。
+
+### 7.1 产出线 B：同位素**取代率 / 富集度** — `同位素取代率计算/`
+
+回答"这批标记肽标记成功了多少"。适用于大分子（质心法对包络重叠不敏感）。
+
+```bash
+cd "同位素取代率计算"
+"$PY" embedded_engine.py        # 自包含引擎（也可被 .xlsm 内嵌调用）
+"$PY" _selftest.py              # 离线自测：构造输入表 → 跑引擎 → 打印结果
+```
+- 方法：**质心法**（主）+ **包络序号法**（独立交叉验证）。见 `解卷积/20260914分析/report.md`。
+- Excel：`同位素取代率计算.xlsm`（自包含；需 `build_xlsm.py` 重建，**先备份**）。
+
+### 7.2 产出线 C：同位素**杂质含量** — `同位素杂质计算/`
+
+回答"未完全标记杂质占多少"（9 档体系 + 逐级三角扣除，**不是**实测谱 NNLS 拟合）。
+
+```bash
+cd "同位素杂质计算"
+"$PY" run_all.py               # sp_003 / STD 0.005 原生流程（⚠️ 输入 mzML 路径已失效，见 AGENTS.md 坑 #7）
+"$PY" run_lcd_impurity.py      # .lcd 批次入口：TOF 标定 + 读谱 + 调 run_all 生成器出报告
+"$PY" model.py                 # 只看 9 档理论模型（回归自检用）
+```
+- 方法权威文档：`同位素杂质计算方法与原理.md`（v1.2，供第三方审核）。
+- 报告格式：**复用 `run_all.py` 的参数化生成器**（`write_sp003_workbook` / `write_std_workbook`），口径取 **M0·积分**。
+- Excel：`同位素杂质计算.xlsm`（自包含；需 `build_xlsm.py` 重建，**先备份**）。
+
+> 两个 xlsm 的重建都需要 **Excel COM**（本机可用，Office 16.0）。重建会覆盖交付用的 xlsm，务必先备份。

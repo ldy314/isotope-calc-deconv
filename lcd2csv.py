@@ -1,5 +1,19 @@
 """lcd2csv.py - 岛津 LabSolutions .lcd → 谱图 CSV（m/z, intensity）
 
+⚠️⚠️ 重要告警（2026-09-24）：本脚本的质量轴换算是**错的**，不要用于定量或化合物归属。 ⚠️⚠️
+    本脚本依赖 openszraw 的线性换算 mz = u64/1e12，但本项目 QTOF 变体的 .lcd
+    （QTFL RawData/Centroid Data）真实关系是 TOF 平方式：
+
+            m/z = a·x² + c        （a、c 需用已知锚点最小二乘标定）
+
+    线性换算会得到随 m/z 漂移的假峰位（实测把真实 942.15 显示成 1442），
+    曾据此误判"这批数据不含 SPH20291"。
+    → 需要正确的 .lcd 读取，改用：
+        * 同位素杂质计算/lcd_io.py            （set_calibration(a,c) + read_lcd）
+        * 同位素取代率计算/embedded_engine.py （自包含版）
+      详见 docs/adr/0008-lcd-tof-quadratic-calibration.md、AGENTS.md 坑 #1。
+    本脚本保留仅用于"看大致扫描结构/TIC"。
+
 用 OpenSZRaw（开源 clean-room 逆向，无需岛津 SDK）读取 .lcd 文件：
   - 支持 LCMS-9030（QTOF，centroid）与 IT-TOF（profile）
   - 三种取谱方式：
