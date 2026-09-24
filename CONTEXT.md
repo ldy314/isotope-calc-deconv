@@ -2,9 +2,9 @@
 
 计算同位素修饰多肽对照品（SPH20291 / SPH20291-Isotope1）的理论同位素分布、同位素取代杂质含量与修饰成功比例（取代率）。**计算引擎统一为 Python（molmass 等开源库）；Excel（`.xlsm`）只做前端，通过按钮调 Python 回填结果。**
 
-> 操作手册与高危坑：`AGENTS.md`　｜　常数与决策台账：`MEMORY.md`　｜　本文件只负责**术语**。
+> 操作手册与高危坑：`AGENTS.md`　｜　**算法总纲：`ALGORITHMS.md`**　｜　常数与决策台账：`MEMORY.md`　｜　本文件只负责**术语**。
 >
-> 四条实现路径：① Python CLI `chem.py`（theo / imp / deconv / lcd / jdx）；② `同位素取代率计算/`（富集度）；③ `同位素杂质计算/`（杂质含量，9 档三角扣除）；④ Excel 版 `ExactMass_Calculator.xlsx` 与三个自包含 `.xlsm`。
+> 四条实现路径：① Python CLI `chem.py`（theo / imp / deconv / lcd / jdx）；② `同位素取代率计算/`（富集度，引擎 `embedded_engine.py`；Excel 前端尚未创建）；③ `同位素杂质计算/`（杂质含量，9 档三角扣除 + `同位素杂质计算.xlsm`）；④ Excel 版 `ExactMass_Calculator.xlsx` / `ExactMass_Impurities*.xlsm`。
 
 ## Language
 

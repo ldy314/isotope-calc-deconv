@@ -1,7 +1,7 @@
 # MEMORY.md — 事实与决策台账
 
 > 本文件记录**已经定下来的事实、常数与决策**，避免重复讨论、重复计算、重复踩坑。
-> 操作手册与陷阱清单在 `AGENTS.md`；领域术语在 `CONTEXT.md`；架构决策全文在 `docs/adr/`。
+> 操作手册与陷阱清单在 `AGENTS.md`；**算法总纲在 `ALGORITHMS.md`**；领域术语在 `CONTEXT.md`；架构决策全文在 `docs/adr/`。
 > 最后更新：2026-09-24
 
 ---
@@ -143,6 +143,8 @@ m/z = a·x² + c     a = 4.53758732e-04     c = -0.44325      残差 ±10 ppm
 1. `run_all.py` 的 sp_003 输入路径失效（写死 `解卷积\解卷积\再处理2\sp_003\sp_003.mzML`）。**可修**：改指 `解卷积/再处理2分析/sp_003.lcd` + `STD 0.005_001.lcd`。用户 2026-09-24 明确"先不动"，**改前先问**。
 2. `lcd2csv.py` 仍是 openszraw 线性换算（错误）。已加告警注释，未改逻辑（`chem lcd` 仍走它）。
 3. `解卷积/deconv_impurity.py`（Aug-8 的 NNLS 版杂质含量脚本）已被 `同位素杂质计算/` 取代，标注为 superseded，未删除。
-4. `同位素取代率计算/同位素取代率计算.xlsm`、`同位素杂质计算/同位素杂质计算.xlsm` 若需同步文案，须跑 `build_xlsm.py`（Excel COM，**先备份**）。
+4. `同位素杂质计算/同位素杂质计算.xlsm` 若需同步文案，须跑 `build_xlsm.py`（Excel COM，**先备份**）。
+   ⚠️ 更正（2026-09-24 实测）：**`同位素取代率计算/同位素取代率计算.xlsm` 并不存在**，该目录也没有 `build_xlsm.py` —— 产出线 B 只有引擎源码 `embedded_engine.py`（可用 `--xlsm` 或 `_selftest.py` 直接跑），Excel 前端尚未创建。
 5. ADR-0004 与实际实现的子命令不一致（文档层面），未改 ADR，仅在本文件与 `CONTEXT.md` 标注漂移。
 6. 根目录 3 个 `ExactMass_Impurities_*.xlsm` 是否入库未定（`_TEST` 与 `_backup_before_deconv` 建议不入库）。
+7. **产出线 B `auto_calibrate` 退化 bug**（2026-09-24 复现）：锚点同源（y 值全同）时最小二乘退化 → `a≈1.16e-16`、质量轴塌缩、取代率全 0；`produce_outputs` 无 `a>0`/y 跨度校验，失败 note 说"沿用输入表 a/c"但实际未回退。**绕过**：输入表 B15=否，或 RT 窗放宽到 258–272 s。**修复待用户确认**（计算逻辑改动）。详见 `AGENTS.md` 坑 #10、`ALGORITHMS.md` §4.5。
