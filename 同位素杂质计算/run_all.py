@@ -110,12 +110,17 @@ def build_natural(z):
     return m0, base, peaks
 
 
-def validate_std(path, z=3):
-    """STD 0.005 验证：
+def validate_std(path, z=3, profile=None, sample_name="STD 0.005"):
+    """STD 天然型对照验证：
        1) 套用标记化合物引擎 → tier0(标记本体) 应为 ≈0（确认无标记化合物）；
-       2) 用天然型 SPH20291 理论包络对照实测峰位置/形状（确认谱图读取正确）。"""
+       2) 用天然型 SPH20291 理论包络对照实测峰位置/形状（确认谱图读取正确）。
+
+    profile: 可选，直接传入现成轮廓谱 {"mz","intensity","rt_lo","rt_hi","n_scans"}
+             （供 .lcd 等非 mzML 通道复用）；为 None 时按 mzML 读取 path。
+    """
     m0_th, base_th, peaks_th = build_natural(z)
-    d = io.read_mzml(path, target_mz=m0_th, half_width_mz=0.5, frac=0.1)
+    d = profile if profile is not None else io.read_mzml(
+        path, target_mz=m0_th, half_width_mz=0.5, frac=0.1)
     mz, inten = d["mz"], d["intensity"]
     c_m0 = C.find_center(mz, inten, m0_th)
     off_ppm = (c_m0 - m0_th) * 1e6 / m0_th
@@ -131,7 +136,12 @@ def validate_std(path, z=3):
     env_norm = [(k, mzp, pr, val, val / m0_val) for (k, mzp, pr, val) in env]
 
     # 标记引擎
-    res = C.analyze_sample(path, z, "STD 0.005")
+    if profile is not None:
+        res = C.analyze_profile(mz, inten, z, sample_name,
+                                rt_lo=d.get("rt_lo"), rt_hi=d.get("rt_hi"),
+                                n_scans=d.get("n_scans"))
+    else:
+        res = C.analyze_sample(path, z, sample_name)
     return {
         "m0_th": m0_th, "base_th": base_th, "c_m0": c_m0, "off_ppm": off_ppm,
         "env": env_norm, "rt_lo": d["rt_lo"], "rt_hi": d["rt_hi"],
@@ -142,10 +152,18 @@ def validate_std(path, z=3):
 # =====================================================================
 # 分辨率稳健性扫描（用户要求「优化分辨率后重算」）
 # =====================================================================
-def sweep_resolution(path, z=3, halves=(0.02, 0.04, 0.06)):
+def sweep_resolution(path, z=3, halves=(0.02, 0.04, 0.06), profile=None,
+                     sample_name="sp_003"):
     out = {}
     for h in halves:
-        res = C.analyze_sample(path, z, "sp_003", half=h)
+        if profile is not None:
+            res = C.analyze_profile(profile["mz"], profile["intensity"], z,
+                                    sample_name, half=h,
+                                    rt_lo=profile.get("rt_lo"),
+                                    rt_hi=profile.get("rt_hi"),
+                                    n_scans=profile.get("n_scans"))
+        else:
+            res = C.analyze_sample(path, z, sample_name, half=h)
         c = res["results"]["m0_integral"]["content_pct"]
         out[h] = {"body": c[0], "tier1": c[1], "tier2": c[2], "tier8": c[8]}
     return out
@@ -154,31 +172,55 @@ def sweep_resolution(path, z=3, halves=(0.02, 0.04, 0.06)):
 # =====================================================================
 # Excel 写入
 # =====================================================================
-def write_sp003_workbook(results_by_z):
+def _zs_desc(zs):
+    """说明页用的电荷态描述。"""
+    if list(zs) == [3, 4]:
+        return "z=3（主）、z=4（辅助，杂质在噪声级，仅供一致性检查）"
+    return "、".join(f"z={z}" for z in zs)
+
+
+def write_sp003_workbook(results_by_z, sample_label="sp_003", out_path=None,
+                         title=None, zs=None, info_overrides=None):
+    """标记化合物（SPH20291-Isotope1）同位素杂质含量报告工作簿。
+
+    sample_label  : 样品标识，写入标题/说明（默认 'sp_003'）
+    out_path      : 输出路径；默认 OUT/<sample_label>_杂质含量.xlsx
+    zs            : 参与的电荷态，默认 ZS=[3, 4]
+    info_overrides: dict，覆盖/追加「说明」页条目（同名覆盖，新名追加）
+    """
+    zs = list(zs or ZS)
     wb = Workbook()
 
     # ---- 说明 sheet ----
     ws = wb.active
     ws.title = "说明"
     set_widths(ws, [22, 90])
-    ws["A1"] = "SPH20291-Isotope1 同位素杂质含量计算 — sp_003"
+    ws["A1"] = title or f"SPH20291-Isotope1 同位素杂质含量计算 — {sample_label}"
     ws["A1"].font = Font(bold=True, size=14)
     info = [
+        ("样品", sample_label),
         ("分析物", "SPH20291-Isotope1（全标记稳定同位素内标版）"),
         ("本体分子式", "C128[13C]6 H198 N26[15N]2 O35 S2（8 个标记原子：6×¹³C + 2×¹⁵N）"),
         ("杂质定义", "8 个标记原子被天然同位素替换的笛卡尔积 = (6+1)(2+1)-1 = 20 个杂质"),
         ("档体系", "tier t = t 个标记原子被天然替换（t=0 本体，t=8 全天然形），共 9 档"),
-        ("电荷态", "z=3（主）、z=4（辅助，杂质在噪声级，仅供一致性检查）"),
-        ("分辨率", "理论系数窗 5 ppm；实测提取/重叠窗 ±0.04 Da（容纳整峰并校准质量偏移）"),
+        ("电荷态", _zs_desc(zs)),
+        ("分辨率", f"理论系数窗 5 ppm；实测提取/重叠窗 ±{C.MEAS_HALF} Da（容纳整峰并校准质量偏移）"),
         ("系数来源", "theo.py 理论同位素包络（固定系数，不做实测谱解卷积拟合）"),
         ("扣除法", "M0 法轻→重、基峰法重→轻逐级三角扣除（5 ppm 下二者位置重合、量级一致）"),
         ("其它杂质扣除", "是——逐级三角扣除时，每档含量已扣掉相邻更轻档基峰的串入（二对角链结构）；非相邻档相距 ~0.33/z Da，远在窗口之外，不会串入"),
-        ("背景扣除", "是——本流程用原始 mzML 自积分（分箱+窗口求和），按约定从峰附近平缓基线处扣本底：基线取测量窗外侧环的中位强度，再自积分值减『基线×箱数』、自峰顶减『基线』。质心化谱窗外无连续本底，实测本底≈0，故结果与未扣一致；若改用 .lcd 已由 LabSolutions 积分并扣本底，则无需此步"),
+        ("背景扣除", "是——窗口内按窗外侧环中位强度扣本底：自积分值减『基线×箱数』、自峰顶减『基线』。质心谱窗外无连续本底，实测本底≈0，故结果与未扣一致"),
         ("理论/实测 m/z", "杂质明细每档 1 行：同档内不可分辨的 ¹³C/¹⁵N 替换组合合并，列出全部分子式与各自真实单同位素 m/z（逐组成精确计算）；实测M0 m/z 为宽窗找真实峰心校准后值，二者偏差即质量轴校准残差"),
         ("4 种算法", "M0·积分 / M0·峰顶 / 基峰·积分 / 基峰·峰顶"),
         ("归一化", "全部物种总量 = 100%（含量 = 物种量/(本体+全部杂质)）"),
         ("判定依据", "以 M0·积分 为准；基峰法、峰顶法作一致性校验"),
     ]
+    if info_overrides:
+        keys = [k for k, _ in info]
+        for k, v in info_overrides.items():
+            if k in keys:
+                info[keys.index(k)] = (k, v)
+            else:
+                info.append((k, v))
     r = 3
     for k, v in info:
         put(ws, r, 1, k, bold=True, align=LEFT)
@@ -186,24 +228,25 @@ def write_sp003_workbook(results_by_z):
         r += 1
 
     # ---- 每个 z：汇总对比 + 杂质明细 + 校准实测 ----
-    for z in ZS:
+    for z in zs:
         res = results_by_z[z]
         _write_tier_summary(wb, res, z)
         _write_impurity_detail(wb, res, z)
-    _write_cal_meas(wb, results_by_z)
+    _write_cal_meas(wb, results_by_z, zs)
 
     # ---- 真实组成（以全标记为本体，扣本体包络投影） ----
-    _write_sp003_real_impurity(wb, results_by_z)
+    _write_sp003_real_impurity(wb, results_by_z, sample_label, zs)
 
     # ---- 四法横向对比（首页总览） ----
-    _write_overview(wb, results_by_z)
+    _write_overview(wb, results_by_z, zs)
 
-    path = os.path.join(OUT, "sp_003_杂质含量.xlsx")
+    path = out_path or os.path.join(OUT, f"{sample_label}_杂质含量.xlsx")
     wb.save(path)
     return path
 
 
-def _write_overview(wb, results_by_z):
+def _write_overview(wb, results_by_z, zs=None):
+    zs = list(zs or ZS)
     ws = wb.create_sheet("四法总览", 1)
     set_widths(ws, [14, 12, 14, 14, 14, 14])
     ws["A1"] = "四法横向对比（本体% / tier1 杂质 %）"
@@ -213,7 +256,7 @@ def _write_overview(wb, results_by_z):
         put(ws, 3, i, h)
     style_header(ws, 3, len(hdr))
     r = 4
-    for z in ZS:
+    for z in zs:
         res = results_by_z[z]
         body = [res["results"][m]["content_pct"][0] for m, _ in METHODS]
         t1 = [res["results"][m]["content_pct"][1] for m, _ in METHODS]
@@ -341,7 +384,8 @@ def _write_impurity_detail(wb, res, z):
     ws.freeze_panes = "A4"
 
 
-def _write_cal_meas(wb, results_by_z):
+def _write_cal_meas(wb, results_by_z, zs=None):
+    zs = list(zs or ZS)
     ws = wb.create_sheet("校准与实测")
     set_widths(ws, [8, 12, 14, 14, 12, 14, 14, 12,
                     14, 14, 14, 14])
@@ -355,7 +399,7 @@ def _write_cal_meas(wb, results_by_z):
         put(ws, 3, i, h)
     style_header(ws, 3, len(hdr))
     r = 4
-    for z in ZS:
+    for z in zs:
         res = results_by_z[z]
         for t in range(9):
             e = M.MODEL[z][t]
@@ -376,12 +420,18 @@ def _write_cal_meas(wb, results_by_z):
     ws.freeze_panes = "C4"
 
 
-def write_std_workbook(val):
+def write_std_workbook(val, std_label="STD 0.005", out_path=None, title=None,
+                       extra_z_res=None):
+    """天然型对照验证工作簿。std_label 用于标题/说明；out_path 默认 OUT/<std_label>_验证.xlsx。
+
+    extra_z_res: 可选 {z: analyze 结果}，为这些电荷态追加「真实标记杂质_z{z}」表
+                 （与原交付物的 4 表结构一致）。
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = "STD验证"
     set_widths(ws, [16, 14, 16, 16, 16, 16])
-    ws["A1"] = "STD 0.005 验证 — 应不含有标记化合物 (tier0≈0)"
+    ws["A1"] = title or f"{std_label} 验证 — 应不含有标记化合物 (tier0≈0)"
     ws["A1"].font = Font(bold=True, size=13)
     meta = [
         ("RT 窗口", f"{val['rt_lo']:.1f}–{val['rt_hi']:.1f} s"),
@@ -432,19 +482,22 @@ def write_std_workbook(val):
         r += 1
 
     # 计算的同位素杂质含量（理论上应为 0，本样品为天然型）
-    _write_std_impurity_detail(wb, val, z=3)
+    _write_std_impurity_detail(wb, val, z=3, std_label=std_label)
     # 真实组成表：以天然型为本体，扣天然包络后的真实标记杂质（应≈0）
-    _write_std_real_impurity(wb, val, z=3)
+    _write_std_real_impurity(wb, val, z=3, std_label=std_label)
+    for z2, res2 in (extra_z_res or {}).items():
+        _write_std_real_impurity(wb, val, z=z2, std_label=std_label,
+                                 sheet_name=f"真实标记杂质_z{z2}", res=res2)
 
-    path = os.path.join(OUT, "STD_0.005_验证.xlsx")
+    path = out_path or os.path.join(OUT, f"{std_label}_验证.xlsx")
     wb.save(path)
     return path
 
 
-def _write_std_impurity_detail(wb, val, z=3):
+def _write_std_impurity_detail(wb, val, z=3, std_label="STD 0.005"):
     ws = wb.create_sheet("杂质明细(计算值)")
     set_widths(ws, [8, 10, 52, 16, 14, 9, 13, 13, 13, 13])
-    ws["A1"] = ("STD 0.005 — 套用「标记化合物定量引擎」算出的同位素杂质含量"
+    ws["A1"] = (f"{std_label} — 套用「标记化合物定量引擎」算出的同位素杂质含量"
                 "（理论上应为 0：本样品为天然型 SPH20291）")
     ws["A1"].font = Font(bold=True, size=11)
     hdr = ["档", "类别", "名称", "理论M0 m/z", "实测M0 m/z", "成员数",
@@ -482,7 +535,7 @@ def _write_std_impurity_detail(wb, val, z=3):
         r += 1
     # 说明块
     r += 1
-    note = ("说明：STD 0.005 为天然型 SPH20291，理论上不含任何标记杂质（tier0 标记本体应为 0%）。"
+    note = (f"说明：{std_label} 为天然型 SPH20291，理论上不含任何标记杂质（tier0 标记本体应为 0%）。"
             "上表是把「标记化合物定量引擎」套在本样品上算出的数值——用标记化合物的理论系数去拟合天然样品，"
             "会重建出一组看似「杂质」的分布（主要是天然同位素包络在标记模型下的投影），并非真实标记杂质。"
             "本表用于验证：若 tier0≈0 且各档数值仅反映天然包络形状，则说明引擎不会凭空制造标记信号，定量基准可信。")
@@ -611,28 +664,35 @@ def _write_real_impurity_sheet(wb, res, z, sheet_name, title, body_k, build_peak
     return body_pct, imp_pct
 
 
-def _write_std_real_impurity(wb, val, z=3):
-    """STD 0.005 真实组成表（以天然型为本体）：本体(天然)≈100%、标记杂质≈0%。"""
+def _write_std_real_impurity(wb, val, z=3, std_label="STD 0.005",
+                             sheet_name="真实标记杂质", res=None):
+    """STD 天然型对照真实组成表（以天然型为本体）：本体(天然)≈100%、标记杂质≈0%。"""
     MEAS = C.MEAS_HALF
     note = (f"说明：本表把『天然型 SPH20291』设为本体，直接回答『样品中有无真实标记杂质』。"
             f"方法：在 9 个锚点（k=0 天然 M0；k=1–8 为含 1–8 个标记原子的杂质 M0）取 ±{MEAS:.2f} Da 窗积分；"
             f"用天然本体理论同位素包络的最小二乘振幅 A 预测各锚点应有的天然同位素峰强度"
             f"（天然 M+k 峰恰好落在『含 k 个标记原子』杂质的 M0 位置，即天然包络在该处的投影），"
-            f"实测减预测的残余 = 真实标记分子信号。STD 0.005 为纯天然型，残余≈0（噪声级）→ "
+            f"实测减预测的残余 = 真实标记分子信号。{std_label} 为纯天然型，残余≈0（噪声级）→ "
             f"本体(天然)≈100%、标记杂质≈0%。该表与『杂质明细(计算值)』（把标记引擎套在天然样品上的投影）"
             f"不同：本表才是扣除天然包络后的真实组成。")
+    if z == 3:
+        title = (f"{std_label} — 真实组成（以天然型为本体）："
+                 f"本体(天然)≈100%，标记杂质≈0%（扣除天然同位素包络后的残余）")
+    else:
+        title = (f"{std_label} — 真实组成 z={z}（以天然型为本体）："
+                 f"本体(天然)≈100%，标记杂质≈0%（扣除天然同位素包络后的残余）")
     return _write_real_impurity_sheet(
-        wb, val["labeled_res"], z, "真实标记杂质",
-        "STD 0.005 — 真实组成（以天然型为本体）：本体(天然)≈100%，标记杂质≈0%（扣除天然同位素包络后的残余）",
-        0, build_natural, note)
+        wb, res if res is not None else val["labeled_res"], z, sheet_name,
+        title, 0, build_natural, note)
 
 
-def _write_sp003_real_impurity(wb, results_by_z):
-    """sp_003 真实组成表（以全标记 SPH20291-Isotope1 为本体）：本体≈98.3%、真实标记杂质≈1.7%。
+def _write_sp003_real_impurity(wb, results_by_z, sample_label="sp_003", zs=None):
+    """标记化合物真实组成表（以全标记 SPH20291-Isotope1 为本体）。
     全标记本体的同位素包络峰全部位于 m/z ≥ 本体M0（高质量侧），不投影到低质量侧杂质锚点
     → 各档残余即真实杂质，与『杂质明细』M0·积分口径一致，验证报告值无本体包络串扰。"""
+    zs = list(zs or ZS)
     MEAS = C.MEAS_HALF
-    for z in ZS:
+    for z in zs:
         res = results_by_z[z]
         rows, body_pct, imp_pct, _, _ = _real_impurity_blocks(res, z, build_labeled, 8)
         imp_rows = [(r["k"], r["content"]) for r in rows if not r["body"]]
@@ -646,7 +706,7 @@ def _write_sp003_real_impurity(wb, results_by_z):
                 f"验证报告值即为扣除本体自身同位素背景后的真实含量。")
         _write_real_impurity_sheet(
             wb, res, z, f"真实标记杂质_z{z}",
-            f"sp_003 — 真实组成（以全标记为本体，z={z}）：本体≈{body_pct:.1f}%，真实标记杂质≈{imp_pct:.1f}%",
+            f"{sample_label} — 真实组成（以全标记为本体，z={z}）：本体≈{body_pct:.1f}%，真实标记杂质≈{imp_pct:.1f}%",
             8, build_labeled, note)
 
 

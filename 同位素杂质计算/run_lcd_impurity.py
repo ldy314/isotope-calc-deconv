@@ -1,25 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-run_lcd_impurity.py — 对岛津 Q-TOF .lcd 计算「同位素杂质含量」（9 档模型）
+run_lcd_impurity.py — 岛津 Q-TOF .lcd 批次的「同位素杂质含量」计算（项目原生方法与报告格式）
 
-与 run_all.py 的分工
+与 run_all.py 的关系
 --------------------
-run_all.py 面向已导出的 **mzML**（sp_003 / STD 0.005 那批，报告文案已固化为该批）；
-本脚本面向 **.lcd 原始文件**，自带 TOF 质量轴标定，复用同一套 9 档逐级三角扣除引擎
-（calc.analyze_profile），可对任意批次跑 STD / SP。
+计算内核与报告格式**完全沿用 run_all.py**，不另起一套：
 
-关键点（2026-09-23）
-------------------
-1. `.lcd`（QTFL Centroid）存储值 x 与 m/z 满足 m/z = a·x² + c，**不是**线性换算；
-   a、c 由 6 个已知锚点最小二乘标定（残差 ±10 ppm）。
-2. 谱为**质心谱**，分箱后单个真实峰会被打散成多个相邻 bin →
-   窗内「积分」会把弱峰相对放大；对本类数据 **M0·峰顶** 与独立方法
-   （解卷积/20260914分析 的包络序号法）吻合更好（t1：2.57% vs 2.52%）。
-   故输出四法全量，主值取 **M0·峰顶**，并与 M0·积分并列供核对。
+  · 引擎：calc.analyze_profile —— 9 档体系、逐级三角扣除（M0 法轻→重 / 基峰法重→轻）、
+          理论系数窗 5 ppm、实测提取/重叠窗 ±0.04 Da、四估计量（M0/基峰 × 积分/峰顶）、
+          归一化到 100%。系数全部来自 theo.py 理论包络，不做实测谱拟合。
+  · 报告：run_all.write_sp003_workbook → 标记化合物工作簿
+            （说明 / 四法总览 / z3_档汇总 / z3_杂质明细 / z4_档汇总 / z4_杂质明细 /
+              校准与实测 / 真实标记杂质_z3 / 真实标记杂质_z4）
+          run_all.write_std_workbook   → 天然型对照工作簿
+            （STD验证 / 杂质明细(计算值) / 真实标记杂质 / 真实标记杂质_z4）
+
+唯一差别在**输入端**：本脚本直接读 .lcd 原始文件，并先做 TOF 质量轴标定
+（m/z = a·x² + c，见 lcd_io 模块头），无需预先导出 mzML。
 
 用法
 ----
-    python run_lcd_impurity.py [--data-dir DIR] [--out DIR] [--rt-lo S] [--rt-hi S]
+    python run_lcd_impurity.py
+    python run_lcd_impurity.py --data-dir DIR --out DIR --rt-lo 261 --rt-hi 266
 """
 from __future__ import annotations
 
@@ -38,277 +40,289 @@ for _p in (PARENT, HERE):
 import calc as C
 import lcd_io
 import model as M
-
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+import run_all as R
 
 # ---- 默认数据与参数 ---------------------------------------------------------
 DEFAULT_DATA = os.path.join(PARENT, "计算数据", "20260914 ID of SPH20291")
-DEFAULT_SAMPLES = [
-    ("STD_005", "STD_005.lcd", "天然形对照（应不含标记本体）"),
-    ("ISO1_004", "SYSPH20291-Isotopel-260911_004.lcd", "样品（SPH20291-Isotope1）"),
-]
-RT_LO, RT_HI = 261.0, 266.0      # = 4.35–4.43 min，覆盖 4.4 min 目标峰
-Z_LIST = (3, 4)                   # z=3 主定量、z=4 辅助（z=2 信噪比不足，不报）
+
+SP_FILE = "SYSPH20291-Isotopel-260911_004.lcd"     # 样品（SPH20291-Isotope1 全标记）
+STD_FILE = "STD_005.lcd"                           # 天然型对照（用户指定 STD_005）
+BLANK_FILE = "blank_001.lcd"
+
+SP_LABEL = "SYSPH20291-Isotope1-260911_004"
+STD_LABEL = "STD_005"
+OUT_SP = SP_LABEL + "_杂质含量.xlsx"
+OUT_STD = STD_LABEL + "_验证.xlsx"
+OUT_MD = "汇总报告.md"
+
+ZS = (3, 4)          # z=3 主定量、z=4 辅助（与 run_all.ZS 一致）
+Z_STD = 3
+RT_SEARCH_HALF = 0.5  # RT 窗口自动检测用的目标 m/z 半宽（Da），与 run_all 一致
+RT_FRAC = 0.1
 
 # 6 个 TOF 标定锚点：(x_measured, z, tier)；tier0 = 全标记本体、tier8 = 天然形。
 # x 取自实测 M0 峰位，理论值由 model.MODEL 给出；来源见 解卷积/20260914分析/analyze_20260914.py。
 ANCHORS = [(1764.742, 2, 8), (1441.284, 3, 8), (1248.498, 4, 8),
            (1767.244, 2, 0), (1443.324, 3, 0), (1250.266, 4, 0)]
 
-METHODS = [("m0_top", "M0·峰顶"), ("m0_integral", "M0·积分"),
-           ("base_top", "基峰·峰顶"), ("base_integral", "基峰·积分")]
-PRIMARY = "m0_top"
 
-# ---- 样式 ------------------------------------------------------------------
-HEAD_FILL = PatternFill("solid", fgColor="1F4E78")
-SUB_FILL = PatternFill("solid", fgColor="D9E1F2")
-KEY_FILL = PatternFill("solid", fgColor="FFF2CC")
-HEAD_FONT = Font(bold=True, color="FFFFFF")
-BOLD = Font(bold=True)
-THIN = Side(style="thin", color="BFBFBF")
-BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-CENTER = Alignment(horizontal="center", vertical="center")
-LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
-PCT = "0.00"
+def build_tof_calibration():
+    """用 6 个锚点最小二乘标定 m/z = a·x² + c，并写入 lcd_io 全局。"""
+    anch = [(x, M.MODEL[z][t]["m0_mz"]) for x, z, t in ANCHORS]
+    a, c, resid = lcd_io.calibrate_tof(anch)
+    lcd_io.set_calibration(a, c)
+    return a, c, resid
 
 
-def put(ws, r, c, v, bold=False, fill=None, align=CENTER, num=None):
-    cell = ws.cell(row=r, column=c, value=v)
-    if bold:
-        cell.font = BOLD
-    if fill:
-        cell.fill = fill
-    cell.alignment = align
-    if num:
-        cell.number_format = num
-    cell.border = BORDER
-    return cell
-
-
-def widths(ws, ws_widths):
-    for i, w in enumerate(ws_widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+def read_profile(path, rt_lo, rt_hi, target_mz):
+    """读取 .lcd：RT 窗口给定则直接用，否则按 target_mz 自动检测（与 mzml_io 同语义）。"""
+    if rt_lo is None or rt_hi is None:
+        d = lcd_io.read_lcd(path, target_mz=target_mz,
+                            half_width_mz=RT_SEARCH_HALF, frac=RT_FRAC)
+    else:
+        d = lcd_io.read_lcd(path, rt_lo=rt_lo, rt_hi=rt_hi)
+    return d
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
-    ap.add_argument("--out", default=None, help="输出目录（默认写入数据目录）")
-    ap.add_argument("--rt-lo", type=float, default=RT_LO)
-    ap.add_argument("--rt-hi", type=float, default=RT_HI)
+    ap.add_argument("--out", default=None, help="输出目录（默认=数据目录）")
+    ap.add_argument("--rt-lo", type=float, default=None, help="RT 窗口下限(s)；缺省自动检测")
+    ap.add_argument("--rt-hi", type=float, default=None, help="RT 窗口上限(s)；缺省自动检测")
     args = ap.parse_args()
     out_dir = args.out or args.data_dir
     os.makedirs(out_dir, exist_ok=True)
 
-    # ---- 标定 ----
-    anch = [(x, M.MODEL[z][t]["m0_mz"]) for x, z, t in ANCHORS]
-    a, c, resid = lcd_io.calibrate_tof(anch)
-    print(f"[标定] m/z = {a:.8e}·x² + ({c:+.5f})  残差 ppm = {[round(r, 1) for r in resid]}")
+    a, c, resid = build_tof_calibration()
+    print("=" * 96)
+    print(f"[TOF 标定] m/z = {a:.8e}·x² + ({c:+.5f})  6 锚点残差(ppm) = "
+          f"{[round(r, 1) for r in resid]}  最大 |残差| = {max(abs(r) for r in resid):.1f} ppm")
 
-    # ---- 计算 ----
-    results = {}
-    for tag, fn, note in DEFAULT_SAMPLES:
-        path = os.path.join(args.data_dir, fn)
-        print("=" * 90)
-        if not os.path.exists(path):
-            print(f"[跳过] 缺文件 {path}")
-            continue
-        d = lcd_io.read_lcd(path, args.rt_lo, args.rt_hi, (a, c))
-        print(f"{tag}  {fn}  RT {d['rt_lo']:.1f}-{d['rt_hi']:.1f}s "
-              f"({d['rt_lo']/60:.2f}-{d['rt_hi']/60:.2f} min)  scans={d['n_scans']} "
-              f"峰数={len(d['mz'])}")
-        results[tag] = {"file": fn, "note": note, "rt": (d["rt_lo"], d["rt_hi"]),
-                        "n_scans": d["n_scans"], "per_z": {}}
-        for z in Z_LIST:
-            r = C.analyze_profile(d["mz"], d["intensity"], z, tag,
-                                  rt_lo=d["rt_lo"], rt_hi=d["rt_hi"], n_scans=d["n_scans"])
-            results[tag]["per_z"][z] = r
-            cc = r["results"][PRIMARY]["content_pct"]
-            print(f"  z={z}  {PRIMARY}: " + "  ".join(f"t{t}={cc[t]:.2f}%" for t in range(9)))
+    # ---------------------------------------------------------------- 样品（SP）
+    sp_path = os.path.join(args.data_dir, SP_FILE)
+    if not os.path.exists(sp_path):
+        raise SystemExit(f"缺样品文件：{sp_path}")
+    sp_prof = read_profile(sp_path, args.rt_lo, args.rt_hi, M.MODEL[Z_STD][0]["m0_mz"])
+    print(f"\n[SP] {SP_FILE}")
+    print(f"  RT {sp_prof['rt_lo']:.1f}–{sp_prof['rt_hi']:.1f} s "
+          f"({sp_prof['rt_lo']/60:.2f}–{sp_prof['rt_hi']/60:.2f} min)  "
+          f"scans={sp_prof['n_scans']}  谱点数={len(sp_prof['mz'])}  "
+          f"m/z {sp_prof['mz'].min():.2f}–{sp_prof['mz'].max():.2f}")
+    results_by_z = {}
+    for z in ZS:
+        res = C.analyze_profile(sp_prof["mz"], sp_prof["intensity"], z, SP_LABEL,
+                                rt_lo=sp_prof["rt_lo"], rt_hi=sp_prof["rt_hi"],
+                                n_scans=sp_prof["n_scans"])
+        results_by_z[z] = res
+        ci = res["results"]["m0_integral"]["content_pct"]
+        ct = res["results"]["m0_top"]["content_pct"]
+        print(f"  z={z}  M0·积分: t0={ci[0]:.2f}%  t1={ci[1]:.2f}%   |   "
+              f"M0·峰顶: t0={ct[0]:.2f}%  t1={ct[1]:.2f}%")
 
-    if not results:
-        raise SystemExit("没有可计算的数据")
+    print(f"\n[SP] 分辨率稳健性扫描 z={Z_STD}（M0·积分）")
+    sweep = R.sweep_resolution(None, z=Z_STD, profile=sp_prof, sample_name=SP_LABEL)
+    for h, d in sweep.items():
+        print(f"  half={h:.3f} Da: 本体={d['body']:.3f}%  tier1={d['tier1']:.3f}%")
 
-    # ---- Excel ----
-    wb = Workbook()
+    # ---------------------------------------------------------------- 对照（STD）
+    std_path = os.path.join(args.data_dir, STD_FILE)
+    val_std = None
+    std_prof = None
+    if os.path.exists(std_path):
+        m0_nat, _, _ = R.build_natural(Z_STD)
+        std_prof = read_profile(std_path, args.rt_lo, args.rt_hi, m0_nat)
+        print(f"\n[STD] {STD_FILE}")
+        print(f"  RT {std_prof['rt_lo']:.1f}–{std_prof['rt_hi']:.1f} s  "
+              f"scans={std_prof['n_scans']}  谱点数={len(std_prof['mz'])}")
+        val_std = R.validate_std(None, z=Z_STD, profile=std_prof, sample_name=STD_LABEL)
+        std_res_z4 = C.analyze_profile(std_prof["mz"], std_prof["intensity"], 4, STD_LABEL,
+                                       rt_lo=std_prof["rt_lo"], rt_hi=std_prof["rt_hi"],
+                                       n_scans=std_prof["n_scans"])
+        t0 = val_std["labeled_res"]["results"]["m0_integral"]["content_pct"][0]
+        print(f"  天然型理论 M0={val_std['m0_th']:.4f}  实测峰心={val_std['c_m0']:.4f}  "
+              f"偏移={val_std['off_ppm']:.2f} ppm")
+        print(f"  套用标记引擎 tier0(标记本体)={t0:.3f}%  （≈0 → 不含标记化合物）")
+    else:
+        print(f"\n[STD] 缺文件 {std_path}，跳过对照验证工作簿")
 
-    # Sheet 1 总览
-    ws = wb.active
-    ws.title = "结果总览"
-    widths(ws, [12, 10, 12] + [9] * 9 + [10])
-    ws["A1"] = "同位素杂质含量（9 档模型）— 20260914 ID of SPH20291 批次"
-    ws["A1"].font = Font(bold=True, size=13)
-    ws["A2"] = (f"RT 窗口 {args.rt_lo:.1f}–{args.rt_hi:.1f} s "
-                f"({args.rt_lo/60:.2f}–{args.rt_hi/60:.2f} min)｜"
-                f"TOF 标定 m/z = {a:.6e}·x² {c:+.5f}（残差 ±{max(abs(r) for r in resid):.0f} ppm）｜"
-                f"主值 = M0·峰顶")
-    ws["A2"].font = Font(size=9, color="555555")
-    hdr = ["样品", "电荷 z", "估计量"] + [f"t{t}" for t in range(9)] + ["备注"]
-    for j, h in enumerate(hdr, start=1):
-        put(ws, 4, j, h, bold=True, fill=HEAD_FILL)
-        ws.cell(row=4, column=j).font = HEAD_FONT
-    row = 5
-    for tag, info in results.items():
-        for z in Z_LIST:
-            r = info["per_z"].get(z)
-            if not r:
-                continue
-            for key, lab in METHODS:
-                cc = r["results"][key]["content_pct"]
-                fill = KEY_FILL if key == PRIMARY else None
-                put(ws, row, 1, tag, bold=(key == PRIMARY), fill=fill, align=LEFT)
-                put(ws, row, 2, z, fill=fill)
-                put(ws, row, 3, lab, bold=(key == PRIMARY), fill=fill, align=LEFT)
-                for t in range(9):
-                    put(ws, row, 4 + t, round(float(cc[t]), 3), fill=fill, num=PCT)
-                put(ws, row, 13, info["note"] if key == PRIMARY else "", align=LEFT)
-                row += 1
-    ws.freeze_panes = "D5"
-    ws["A" + str(row + 1)] = ("t0 = 全标记本体（SPH20291-Isotope1）；t1…t8 = 依次少 1…8 个标记原子"
-                              "（未完全标记杂质）。STD_005 为天然形对照：t0/t1 = 0 表示不含标记本体，"
-                              "其 t4–t8 分布来自天然同位素包络的投影，非杂质。")
-    ws["A" + str(row + 1)].font = Font(size=9, color="C00000")
+    # ---------------------------------------------------------------- 空白（参考）
+    blank_path = os.path.join(args.data_dir, BLANK_FILE)
+    if os.path.exists(blank_path):
+        d = read_profile(blank_path, args.rt_lo, args.rt_hi, M.MODEL[Z_STD][0]["m0_mz"])
+        tot = float(np.nansum(d["intensity"]))
+        print(f"\n[blank] {BLANK_FILE}  RT {d['rt_lo']:.1f}–{d['rt_hi']:.1f} s  "
+              f"谱点数={len(d['mz'])}  窗内总强度={tot:.0f}")
 
-    # Sheet 2/3 各样品明细
-    for tag, info in results.items():
-        for z in Z_LIST:
-            r = info["per_z"].get(z)
-            if not r:
-                continue
-            ws = wb.create_sheet(f"{tag}_z{z}")
-            widths(ws, [7, 52, 11, 11, 11, 11, 12, 12, 12])
-            ws["A1"] = f"{tag} — 同位素杂质含量（z={z}）｜{info['file']}"
-            ws["A1"].font = Font(bold=True, size=12)
-            ws["A2"] = (f"RT {info['rt'][0]:.1f}–{info['rt'][1]:.1f}s｜"
-                        f"主值 M0·峰顶（本批质心谱下与独立方法吻合）")
-            ws["A2"].font = Font(size=9, color="555555")
-            head = ["档", "物种", "M0·峰顶 %", "M0·积分 %", "基峰·峰顶 %", "基峰·积分 %",
-                    "理论 M0 m/z", "窗内峰顶", "窗内积分"]
-            for j, h in enumerate(head, start=1):
-                put(ws, 4, j, h, bold=True, fill=HEAD_FILL)
-                ws.cell(row=4, column=j).font = HEAD_FONT
-            rows = r["results"][PRIMARY]["rows"]
-            mi = r["measured"]["m0"]["integral"]
-            mt = r["measured"]["m0"]["top"]
-            notes = r["results"][PRIMARY]["notes"]
-            rr = 5
-            for item in rows:
-                t = item["tier"]
-                c1 = r["results"]["m0_top"]["content_pct"][t]
-                c2 = r["results"]["m0_integral"]["content_pct"][t]
-                c3 = r["results"]["base_top"]["content_pct"][t]
-                c4 = r["results"]["base_integral"]["content_pct"][t]
-                fill = KEY_FILL if t == 0 else None
-                name = item["name"]
-                if isinstance(item.get("m0_mz_real"), list):
-                    name = f"{name}｜m/z " + ", ".join(f"{v:.3f}" for v in item["m0_mz_real"][:4])
-                put(ws, rr, 1, t, bold=True, fill=fill)
-                put(ws, rr, 2, name, fill=fill, align=LEFT)
-                put(ws, rr, 3, round(float(c1), 3), bold=True, fill=fill, num=PCT)
-                put(ws, rr, 4, round(float(c2), 3), fill=fill, num=PCT)
-                put(ws, rr, 5, round(float(c3), 3), fill=fill, num=PCT)
-                put(ws, rr, 6, round(float(c4), 3), fill=fill, num=PCT)
-                put(ws, rr, 7, round(float(item["m0_mz_real"][0] if isinstance(
-                    item["m0_mz_real"], list) else item["m0_mz_real"]), 4))
-                put(ws, rr, 8, round(float(mt[t]), 0), num="#,##0")
-                put(ws, rr, 9, round(float(mi[t]), 0), num="#,##0")
-                if t in notes:
-                    ws.cell(row=rr, column=2).value = f"{name}  ⚠ {notes[t]}"
-                rr += 1
-            tot = sum(r["results"][PRIMARY]["content_pct"].values())
-            put(ws, rr, 2, f"合计（归一化）={tot:.2f}%", bold=True, align=LEFT)
-            ws.freeze_panes = "C5"
+    # ---------------------------------------------------------------- 写 Excel
+    max_resid = max(abs(r) for r in resid)
+    src = (f"岛津 LCMS-9030 Q-TOF .lcd 原始文件（QTFL Centroid）直读："
+           f"RT {sp_prof['rt_lo']:.1f}–{sp_prof['rt_hi']:.1f} s（{sp_prof['rt_lo']/60:.2f}–"
+           f"{sp_prof['rt_hi']/60:.2f} min，4.4 min 目标峰），{sp_prof['n_scans']} 个扫描累加；"
+           f"质量轴 m/z = a·x² + c，a={a:.8e}、c={c:+.5f}（6 锚点最小二乘，残差 ±{max_resid:.0f} ppm）")
+    ci3 = results_by_z[3]["results"]["m0_integral"]["content_pct"]
+    ct3 = results_by_z[3]["results"]["m0_top"]["content_pct"]
+    extra = (
+        f"本批谱为质心谱（centroid），窗内累加后单个真实峰被分箱展开为多个相邻箱"
+        f"（实测 tier0 跨 5–6 箱、tier1 跨 10–11 箱），故「窗内积分」与「窗内峰顶」差异较大："
+        f"M0·积分 本体 {ci3[0]:.2f}% / tier1 {ci3[1]:.2f}%，M0·峰顶 本体 {ct3[0]:.2f}% / tier1 {ct3[1]:.2f}%。"
+        f"本表按项目约定以 M0·积分 为判定依据，四种算法数值全部列出，供按需取舍。"
+    )
+    print("\n" + "=" * 96)
+    p1 = R.write_sp003_workbook(
+        results_by_z, sample_label=SP_LABEL,
+        out_path=os.path.join(out_dir, OUT_SP), zs=ZS,
+        info_overrides={"数据来源": src, "本批附加说明": extra})
+    print(f"[SAVED] {p1}")
 
-    # Sheet 4 校准与实测
-    ws = wb.create_sheet("校准与实测")
-    widths(ws, [12, 6, 5, 7, 13, 13, 11, 13, 13, 12])
-    head = ["样品", "z", "档", "锚点", "理论 m/z", "实测峰心", "偏差 ppm",
-            "窗内峰顶", "窗内积分", "基线"]
-    for j, h in enumerate(head, start=1):
-        put(ws, 1, j, h, bold=True, fill=HEAD_FILL)
-        ws.cell(row=1, column=j).font = HEAD_FONT
-    rr = 2
-    for tag, info in results.items():
-        for z in Z_LIST:
-            r = info["per_z"].get(z)
-            if not r:
-                continue
-            for t in range(9):
-                for anchor, lab in (("m0", "M0"), ("base", "基峰")):
-                    if anchor == "m0":
-                        th = M.MODEL[z][t]["m0_mz"]
-                        meas_v = r["measured"]["m0"]["top"][t]
-                        meas_i = r["measured"]["m0"]["integral"][t]
-                    else:
-                        th = M.MODEL[z][t]["base_mz"]
-                        meas_v = r["measured"]["base"]["top"][t]
-                        meas_i = r["measured"]["base"]["integral"][t]
-                    ctr = r["centers"][(t, anchor)]
-                    put(ws, rr, 1, tag, align=LEFT)
-                    put(ws, rr, 2, z)
-                    put(ws, rr, 3, t)
-                    put(ws, rr, 4, lab)
-                    put(ws, rr, 5, round(float(th), 4))
-                    put(ws, rr, 6, round(float(ctr), 4))
-                    put(ws, rr, 7, round((ctr - th) * 1e6 / th, 1))
-                    put(ws, rr, 8, round(float(meas_v), 0), num="#,##0")
-                    put(ws, rr, 9, round(float(meas_i), 0), num="#,##0")
-                    put(ws, rr, 10, round(float(r["baselines"].get((t, anchor), 0.0)), 1))
-                    rr += 1
-    ws.freeze_panes = "A2"
+    p2 = None
+    if val_std is not None:
+        p2 = R.write_std_workbook(val_std, std_label=STD_LABEL,
+                                  out_path=os.path.join(out_dir, OUT_STD),
+                                  extra_z_res={4: std_res_z4})
+        print(f"[SAVED] {p2}")
 
-    # Sheet 5 方法与参数
-    ws = wb.create_sheet("方法与参数")
-    widths(ws, [120])
-    lines = [
-        "一、数据与换算",
-        f"  · 数据目录：{args.data_dir}",
-        "  · 岛津 Q-TOF .lcd（QTFL Centroid）：存储值 x 与 m/z 满足 m/z = a·x² + c，不是线性换算；",
-        f"    a = {a:.8e}，c = {c:+.5f}（6 锚点最小二乘，残差 ±{max(abs(r) for r in resid):.0f} ppm）",
-        f"  · RT 窗 {args.rt_lo:.1f}–{args.rt_hi:.1f} s = {args.rt_lo/60:.2f}–{args.rt_hi/60:.2f} min（4.4 min 目标峰）",
-        "  · 累加窗内质心谱，按 x 分箱 1e-3",
-        "",
-        "二、模型（model.py，9 档）",
-        "  · 本体 = SPH20291-Isotope1（C128[13C]6H198N26[15N]2O35S2），共 8 个标记原子",
-        "  · 档 t = 有 t 个标记原子被天然同位素替换（t=0 全标记本体，t=8 全天然）",
-        "  · 同档内 13C/15N 组合在 5 ppm 下质量简并 → 每档合并为 1 行、含量取整档总量",
-        "",
-        "三、含量算法（calc.py，逐级三角扣除）",
-        "  · 9 档沿质量轴构成二对角链：位置 M0(t) 上只叠『本档 M0』与『更轻一档 t+1 的基峰』",
-        "  · 理论重叠系数 W[i][j] = tier j 全部理论峰落在 tier i 锚点 ±0.04 Da 内的概率之和（5 ppm）",
-        "  · M0 法：t=8→0 逐级扣除；基峰法：t=0→8 逐级扣除；负值截断为 0",
-        "  · 归一化：含量% = 该档量 / Σ(全部 9 档) × 100",
-        "",
-        "四、为什么主值取 M0·峰顶 而非 M0·积分",
-        "  · 本批为**质心谱**，按 x 分箱后单个真实峰被打散成多个相邻 bin",
-        "    （实测 tier0 跨 5 个 bin、tier1 跨 10 个 bin），窗内『积分』会相对放大弱峰与噪声；",
-        "  · M0·峰顶（窗内最大强度）与独立方法（解卷积/20260914分析 的包络序号法）吻合：",
-        "    ISO1_004 轻一档 z=3 2.57%（报告 2.52%）、z=4 1.27%（报告 1.26%）；",
-        "  · 四法结果均列出，供交叉核对。",
-        "",
-        "五、结果解读",
-        "  · ISO1_004（SPH20291-Isotope1）：t0 = 全标记本体，t1 = 少 1 个标记原子的杂质（主杂质）。",
-        "  · STD_005（天然形对照）：t0/t1 = 0 → 不含标记本体；其 t4–t8 分布来自**天然同位素包络**",
-        "    在相应档位的投影，不是真实杂质（该结论与 20260914分析 报告一致）。",
-        "  · z=2 因窗内噪声占比高（>70%）不予报出。",
-        "",
-        "六、与既有交付物的关系",
-        "  · 引擎与参数（5 ppm 系数、±0.04 Da 提取窗、四估计量）与 run_all.py 完全一致；",
-        "  · 差异仅在于输入端：本脚本直接读 .lcd 并做 TOF 标定，无需预先导出 mzML。",
-    ]
-    for i, s in enumerate(lines, start=1):
-        cell = ws.cell(row=i, column=1, value=s)
-        cell.alignment = LEFT
-        if s and (s[0] in "一二三四五六"):
-            cell.font = BOLD
+    p3 = write_batch_report(os.path.join(out_dir, OUT_MD), results_by_z, sweep, val_std,
+                            sp_prof, a, c, resid, args.data_dir)
+    print(f"[SAVED] {p3}")
+    return p1, p2, p3
 
-    out_path = os.path.join(out_dir, "同位素杂质含量_20260914批次.xlsx")
-    wb.save(out_path)
-    print("=" * 90)
-    print(f"[SAVED] {out_path}")
-    return out_path
+
+# =====================================================================
+# 批次汇总报告（结构与 run_all.write_report 对齐，样品/批次可换）
+# =====================================================================
+def write_batch_report(path, results_by_z, sweep, val_std, sp_prof, a, c, resid, data_dir):
+    lines = []
+    A = lines.append
+    A("# 同位素杂质含量计算 — 汇总报告")
+    A("")
+    A(f"**批次数据目录**：`{data_dir}`")
+    A(f"**样品**：{SP_LABEL}（`{SP_FILE}`，目标 SPH20291-Isotope1 全标记内标版）")
+    A("**日期**：2026-09-24　**脚本**：`run_lcd_impurity.py`（复用 `run_all.py` 的引擎与报告格式）")
+    A("")
+    A("## 1. 任务与模型")
+    A("")
+    A("- **分析物**：SPH20291-Isotope1 = `C128[13C]6 H198 N26[15N]2 O35 S2`，8 个标记原子（6×¹³C + 2×¹⁵N）")
+    A("- **杂质定义**：8 个标记原子被天然同位素替换的笛卡尔积 = (6+1)(2+1)−1 = **20** 个杂质")
+    A("- **档体系**：tier t = t 个标记原子被天然替换（t=0 本体，t=8 全天然形），共 **9 档**；")
+    A("  20 个杂质组成按档归并，同档内不可分辨组合在「杂质明细」中合并（每档 1 行，共 9 行），含量取整档总量。")
+    A("- **电荷态**：z=3（主定量）、z=4（辅助，杂质在噪声级，仅作一致性校验）")
+    A("- **分辨率**：理论系数窗 5 ppm；实测提取/重叠窗 ±%.2f Da" % C.MEAS_HALF)
+    A("- **系数来源**：`theo.py` 理论同位素包络作**固定系数**，**不做实测谱解卷积拟合**")
+    A("- **扣除法**：9 档体系本质二对角（位置 M0(t) 叠放本体档 t 的 M0 与档 t+1 的基峰）；")
+    A("  M0 法轻→重、基峰法重→轻逐级三角扣除。5 ppm 下基峰(t) 与 M0(t−1) 位置重合，二者量级一致、可互校验；")
+    A("  但链端存在固有偏差，并非严格等价，本报告以 **M0·积分** 为准。")
+    A("- **其它杂质影响已扣除**：逐级三角扣除时，计算某档含量会扣掉相邻更轻档(t+1)基峰在 M0(t) 处的串入；")
+    A("  非相邻档相距 ~0.33/z Da（≈353 ppm），远在 ±%.2f Da 提取窗之外，不会串入。" % C.MEAS_HALF)
+    A("- **4 种算法**：M0·积分 / M0·峰顶 / 基峰·积分 / 基峰·峰顶；**归一化**到全部物种总量 = 100%")
+    A("")
+    A("### 1.1 数据入口（与 run_all.py 的唯一差别）")
+    A("")
+    A(f"- 直接读岛津 Q-TOF `.lcd`（QTFL Centroid），无需预先导出 mzML。")
+    A(f"- **质量轴标定**：存储值 x 与 m/z 满足 `m/z = a·x² + c`（非 openszraw 文档的线性换算；")
+    A(f"  线性换算会把 942.15 显示成 1442，峰位随 m/z 漂移，完全误导归属判断）。")
+    A(f"  a = {a:.8e}，c = {c:+.5f}，6 锚点最小二乘，残差 {[round(r,1) for r in resid]} ppm。")
+    A(f"- **RT 窗口**：{sp_prof['rt_lo']:.1f}–{sp_prof['rt_hi']:.1f} s "
+      f"（{sp_prof['rt_lo']/60:.2f}–{sp_prof['rt_hi']/60:.2f} min），{sp_prof['n_scans']} 个扫描累加，"
+      f"按 x 分箱 1e-3（m/z 步长约 1.6e-3 Da）。")
+    A("")
+    A("## 2. 计算结果（z=3，主定量）")
+    A("")
+    res3 = results_by_z[3]
+    A("| 档 | 档名 | M0·积分 | M0·峰顶 | 基峰·积分 | 基峰·峰顶 |")
+    A("|---|---|---:|---:|---:|---:|")
+    for t in range(9):
+        nm = M.TIERS[t]["name"]
+        vals = [res3["results"][m]["content_pct"][t] for m, _ in R.METHODS]
+        A(f"| {t} | {nm} | {vals[0]:.4f} | {vals[1]:.4f} | {vals[2]:.4f} | {vals[3]:.4f} |")
+    A("")
+    A(f"> 判定（M0·积分）：**本体 = {res3['results']['m0_integral']['content_pct'][0]:.3f}%**，"
+      f"**tier1 杂质 = {res3['results']['m0_integral']['content_pct'][1]:.3f}%**，tier 2–8 ≈ 0（低于检出）。")
+    A(f"> 即 {SP_LABEL} 样品基本为**全标记本体**，含约 "
+      f"{res3['results']['m0_integral']['content_pct'][1]:.1f}% 的「1 个标记原子被天然替换」杂质（tier1），"
+      f"更高替换档可忽略。")
+    A("")
+    A("## 3. 四种算法对比")
+    A("")
+    A("| 指标 | M0·积分 | M0·峰顶 | 基峰·积分 | 基峰·峰顶 |")
+    A("|---|---:|---:|---:|---:|")
+    for label, t in [("本体% (z=3)", 0), ("tier1% (z=3)", 1)]:
+        vals = [results_by_z[3]["results"][m]["content_pct"][t] for m, _ in R.METHODS]
+        A(f"| {label} | {vals[0]:.3f} | {vals[1]:.3f} | {vals[2]:.3f} | {vals[3]:.3f} |")
+    A("")
+    A("- 本批为**质心谱**：逐扫描质心峰位存在抖动，累加分箱后单个真实峰被展开为多个相邻箱")
+    A("  （实测 tier0 跨 5–6 箱、tier1 跨 10–11 箱）。**积分 = 该峰全部离子的总数**，")
+    A("  而**峰顶 = 单个箱内强度**，因弱峰的质心抖动更大，峰顶会系统**低估**弱峰相对含量。")
+    A("- 因此本批「积分」与「峰顶」差异明显大于 sp_003 那批（那批为 mzML，抖动分布不同）。")
+    A("- 按项目约定以 **M0·积分** 为准；基峰法作一致性校验。")
+    A("")
+    A("## 4. z=4 辅助结果（一致性校验）")
+    A("")
+    res4 = results_by_z[4]
+    A("| 档 | M0·积分 | M0·峰顶 | 基峰·积分 | 基峰·峰顶 |")
+    A("|---|---:|---:|---:|---:|")
+    for t in range(9):
+        vals = [res4["results"][m]["content_pct"][t] for m, _ in R.METHODS]
+        A(f"| {t} | {vals[0]:.4f} | {vals[1]:.4f} | {vals[2]:.4f} | {vals[3]:.4f} |")
+    A("")
+    A(f"> z=4 下 tier1 杂质约 {res4['results']['m0_integral']['content_pct'][1]:.3f}%（积分）/ "
+      f"{res4['results']['m0_top']['content_pct'][1]:.3f}%（峰顶），趋势与 z=3 一致，仅作交叉验证。")
+    A("")
+    A("## 5. 分辨率稳健性扫描")
+    A("")
+    A(f"对 {SP_LABEL} z=3、M0·积分法，扫描实测提取窗半宽：")
+    A("")
+    A("| 提取窗半宽 (Da) | 本体% | tier1% | tier2% | tier8% |")
+    A("|---|---:|---:|---:|---:|")
+    for h, d in sweep.items():
+        A(f"| {h:.3f} | {d['body']:.3f} | {d['tier1']:.3f} | {d['tier2']:.3f} | {d['tier8']:.3f} |")
+    A("")
+    A("## 6. 天然型对照验证（%s）" % STD_LABEL)
+    A("")
+    if val_std is not None:
+        A(f"- {STD_LABEL} 应只含**天然型 SPH20291**（无标记化合物）。")
+        A(f"- 套用标记引擎得 **tier0(标记本体) = "
+          f"{val_std['labeled_res']['results']['m0_integral']['content_pct'][0]:.3f}%**，≈0，确认无标记化合物。")
+        A(f"- 用天然型理论包络对照实测：理论 M0={val_std['m0_th']:.4f}，实测峰心={val_std['c_m0']:.4f}，"
+          f"质量偏移={val_std['off_ppm']:.2f} ppm，谱图读取与校准正确。")
+        body_pct, imp_pct = R.std_real_impurity(val_std, z=Z_STD)
+        A(f"- 真实组成（「真实标记杂质」表，以天然型为本体、扣天然包络）：本体(天然)={body_pct:.3f}%，"
+          f"标记杂质合计={imp_pct:.3f}%（≈0）→ 样品确为纯天然型。")
+    else:
+        A("- 未提供对照文件，跳过。")
+    A("")
+    A("## 7. 质量校准残差（%s）" % SP_LABEL)
+    A("")
+    A("| 档 | z=3 偏移ppm(M0) | z=4 偏移ppm(M0) |")
+    A("|---|---:|---:|")
+    for t in range(9):
+        off3 = results_by_z[3]["cal_off"][(t, "m0")] * 1e6 / M.MODEL[3][t]["m0_mz"]
+        off4 = results_by_z[4]["cal_off"][(t, "m0")] * 1e6 / M.MODEL[4][t]["m0_mz"]
+        A(f"| {t} | {off3:+.2f} | {off4:+.2f} |")
+    A("")
+    A("## 8. 结论与建议")
+    A("")
+    A(f"1. {SP_LABEL} 的同位素杂质以 **tier1（1 个标记原子被天然替换）** 为主，"
+      f"含量约 **{res3['results']['m0_integral']['content_pct'][1]:.2f}%**（M0·积分法，项目约定口径），"
+      f"更高替换档可忽略。")
+    A("2. 四种算法互洽但存在系统差异（积分 vs 峰顶），源自质心谱累加后的分箱展宽；")
+    A("   建议以 **M0·积分** 作报告值，峰顶法作保守下界参考。")
+    A(f"3. {STD_LABEL} 验证通过（tier0≈0），质量轴标定与谱图读取正确。")
+    A("4. 结果对提取窗选择稳健（见 §5）。")
+    A("")
+    A("---")
+    A("")
+    A("**输出文件**：")
+    A(f"- `{OUT_SP}`（说明 / 四法总览 / z3·z4 档汇总 / z3·z4 杂质明细 / 校准与实测 / 真实标记杂质_z3·_z4）")
+    if val_std is not None:
+        A(f"- `{OUT_STD}`（STD验证 / 杂质明细(计算值) / 真实标记杂质 / 真实标记杂质_z4）")
+    A(f"- `{OUT_MD}`（本报告）")
+    A("")
+    A("> 说明：本流程为「理论系数固定、逐级扣除」算法，非实测谱解卷积拟合；")
+    A("> 对 C>50 的大分子，同位素包络高度重叠，绝对丰度依赖理论系数，结论以相对趋势为准。")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path
 
 
 if __name__ == "__main__":

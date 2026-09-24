@@ -209,7 +209,10 @@ def distribute_to_impurities(content_pct, z):
 
 
 def _read_profile(path, target_mz, half_width_mz=0.5, frac=0.1):
-    """按扩展名分派谱图读取：.lcd → lcd_io（OpenSZRaw，质心谱）；其余 → mzml_io。"""
+    """按扩展名分派谱图读取：.lcd → lcd_io（需先 set_calibration）；其余 → mzml_io。
+
+    两条通道返回结构一致（mz/intensity/n_scans/rt_lo/rt_hi），故上层 calc 无需感知来源。
+    """
     if str(path).lower().endswith(".lcd"):
         import lcd_io
         return lcd_io.read_lcd(path, target_mz=target_mz,
