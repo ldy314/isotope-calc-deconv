@@ -57,6 +57,17 @@ BIN_X = 1.0e-3                # x 轴分箱宽度
 ENV_HALF_U = 0.2              # 包络逐峰提取半宽（以 u 为单位）
 LABELED_SHIFT = 8             # 天然形 ↔ 全标记形 之间的同位素序号位移（= 标记原子数）
 
+# --- 自动重标定的采纳门槛（2026-09-25 加；此前无校验，锚点同源时会把质量轴算塌）---
+MIN_ANCHOR_SPAN = 0.05        # 锚点理论质量的最小跨度（Da）
+                              # 若全部锚点来自同一参照形、同一电荷态，理论 y 值全同
+                              # → 设计矩阵 [x², 1] 两列不可分辨 → lstsq 退化解
+                              # （实测得 a≈1.16e-16、c≈942.475，质量轴塌缩成单点）
+MIN_CAL_A = 1.0e-8            # 标定 a 的下限：必须为正且非退化（正常值 ≈4.54e-4）
+MAX_CAL_REL = 2.0e-4          # 标定残差上限（200 ppm）：实测正常残差仅 ±10 ppm，
+                              # 而锚点误配（错认同位素峰）至少偏 1 个同位素间距
+                              # （z=3 → 0.334 Da @942 ≈ 355 ppm；z=4 ≈ 500 ppm）
+                              # → 200 ppm 可拦下误配，同时留 20× 正常余量
+
 NAT_REF_DEFAULT = "STD_002,STD_003,STD_005"
 
 
@@ -363,6 +374,13 @@ def auto_calibrate(spectra, z_list, apex_theo, a0, a_c_default_c):
     对每个样品：比较其"天然形位置"与"全标记形位置"的峰强度，只采用明显占优的一方
     （天然对照样品自然给 nat 锚点，全标记样品给 lab 锚点，混合样品被弃用）。
     -> (a, c, anchors, note)
+
+    三道采纳门槛（任一不过 → 返回 anchors=[] 与原因 note，调用方须沿用输入表 a/c）：
+      ① 锚点理论质量跨度 ≥ MIN_ANCHOR_SPAN —— 防「锚点同源」导致的退化拟合
+      ② a > MIN_CAL_A 且 a/c 有限 —— 防质量轴塌缩
+      ③ 残差 ≤ MAX_CAL_REL —— 防锚点误配
+    ⚠ 历史事故：无门槛时，窄 RT 窗下只有 z=3 找到 3 个同源锚点（理论值全同），
+      lstsq 退化得 a≈1.16e-16、c≈942.475 → 质量轴塌缩成单点 → 全部取代率算成 0。
     """
     a, c = a0, a_c_default_c
     anchors, note = [], ""
@@ -394,6 +412,17 @@ def auto_calibrate(spectra, z_list, apex_theo, a0, a_c_default_c):
             break
         xs2 = np.array([p[0] ** 2 for p in pts])
         ys = np.array([p[1] for p in pts])
+
+        # 校验①：理论锚点质量必须跨 ≥ MIN_ANCHOR_SPAN Da。
+        # 若锚点全部同源（同一参照形 + 同一电荷态），y 值全同 → 设计矩阵 [x², 1]
+        # 两列不可分辨 → lstsq 给出退化解（a→0 且 c→该定值），质量轴塌缩。
+        span = float(ys.max() - ys.min())
+        if span < MIN_ANCHOR_SPAN:
+            note = ("锚点理论质量无跨度（%.4f–%.4f，仅 %.5f Da < %.2f Da）：锚点同源，"
+                    "x² 与常数项不可分辨，最小二乘退化 → 沿用输入表 a/c"
+                    % (ys.min(), ys.max(), span, MIN_ANCHOR_SPAN))
+            break
+
         A = np.c_[xs2, np.ones_like(xs2)]
         sol, *_ = np.linalg.lstsq(A, ys, rcond=None)
         a_new, c_new = float(sol[0]), float(sol[1])
@@ -401,15 +430,32 @@ def auto_calibrate(spectra, z_list, apex_theo, a0, a_c_default_c):
         pred = a_new * xs2 + c_new
         keep = np.abs(pred - ys) / ys < 1e-3
         if keep.sum() >= 3 and keep.sum() < len(pts):
-            xs2, ys = xs2[keep], ys[keep]
-            A = np.c_[xs2, np.ones_like(xs2)]
-            sol, *_ = np.linalg.lstsq(A, ys, rcond=None)
+            xs2f, ysf = xs2[keep], ys[keep]
+            Af = np.c_[xs2f, np.ones_like(xs2f)]
+            sol, *_ = np.linalg.lstsq(Af, ysf, rcond=None)
             a_new, c_new = float(sol[0]), float(sol[1])
+        else:
+            xs2f, ysf = xs2, ys          # 未触发剔除：拟合即用全集
+
+        # 校验②：a 必须为正、有限、非退化（正常值 ≈ 4.54e-4，本机 QTOF）
+        if not (math.isfinite(a_new) and math.isfinite(c_new) and a_new > MIN_CAL_A):
+            note = ("拟合退化（a=%.6e，c=%.5f；要求 a>%.1e 且有限）：沿用输入表 a/c"
+                    % (a_new, c_new, MIN_CAL_A))
+            break
+
+        # 校验③：残差按「实际参与拟合的锚点」评估，须在 MAX_CAL_REL 内
+        rel = np.abs(a_new * xs2f + c_new - ysf) / ysf
+        if float(rel.max()) > MAX_CAL_REL:
+            note = ("拟合残差过大（最大 %.0f ppm > %.0f ppm，用 %d 个锚点）：沿用输入表 a/c"
+                    % (float(rel.max()) * 1e6, MAX_CAL_REL * 1e6, len(ysf)))
+            break
+
+        # 通过全部门槛 → 登记锚点（收敛也要登记，否则诊断误报 n_anchor=0）
+        anchors = pts
         if abs(a_new - a) <= 1e-12 and abs(c_new - c) <= 1e-9:
             a, c = a_new, c_new
             break
         a, c = a_new, c_new
-        anchors = pts
     resid = []
     for x, y in anchors:
         yf = a * x * x + c
@@ -618,15 +664,18 @@ def produce_outputs(xlsm_path, inp):
             spectra[s["name"]] = (np.array([]), np.array([]), 0)
             read_note[s["name"]] = "读取失败：%s" % str(e)[:80]
 
-    # 标定
+    # 标定（自动重标定须过 auto_calibrate 的三道门槛；任一不过 → 真回退到输入表 a/c）
     a, c = inp["a"], inp["c"]
     anchors, cal_note = [], ""
     if inp["auto_cal"]:
         a2, c2, anchors, cal_note = auto_calibrate(spectra, z_list, apex_theo, a, c)
-        if len(anchors) >= 3:
+        ok = (len(anchors) >= 3 and math.isfinite(a2) and math.isfinite(c2)
+              and a2 > MIN_CAL_A)
+        if ok:
             a, c = a2, c2
         else:
-            cal_note = cal_note or "自动标定未采用，沿用输入表 a/c"
+            anchors = []      # 明确置空：未过门槛的标定一律不得采纳（防质量轴塌缩）
+            cal_note = cal_note or "自动标定未过门槛，沿用输入表 a/c"
 
     # 逐样品 × 电荷态
     detail_rows, dist_rows, overview, cal_rows = [], [], [], []
